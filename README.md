@@ -1,6 +1,6 @@
-# TC001 Custom Firmware - API Display Monitor
+# Ulanzi TC001 Custom Firmware - API Display Monitor
 
-Custom firmware for the Ulanzi TC001 pixel display clock that enables portable API monitoring for trade shows and events. This firmware allows the device to poll APIs directly without requiring external servers like AWTRIX.
+Custom firmware for the Ulanzi TC001 pixel display clock that enables portable API monitoring for markets, trade shows and events. This firmware allows the device to poll APIs directly without requiring external servers like AWTRIX.
 
 ![TC001 Display](images/ulanzi-tc001.png)
 
@@ -24,6 +24,7 @@ Custom firmware for the Ulanzi TC001 pixel display clock that enables portable A
 The TC001 Custom Firmware transforms your Ulanzi TC001 into a self-contained API monitoring device. Perfect for scenarios where you need portable, at-a-glance monitoring without relying on external infrastructure.
 
 **Key Use Cases:**
+- Markets : Social media followers
 - Trade show booth metrics (visitor counts, lead generation)
 - Support ticket monitoring on the go
 - Real-time sales dashboards
@@ -36,9 +37,7 @@ AWTRIX requires an external server to POST data to the device. This firmware pol
 ## Hardware Specifications
 
 **Device:** Ulanzi TC001 Pixel Display Clock
-
 **Display:** 32x8 WS2812 LED Matrix
-
 **Microcontroller:** ESP32
 
 ### Pinout Reference
@@ -70,6 +69,7 @@ AWTRIX requires an external server to POST data to the device. This firmware pol
 - ⏱️ Configurable polling intervals (5-3600 seconds)
 - 🧭 Flexible JSON path navigation
 - 📊 Support for nested objects and arrays
+- ✅ HTTPS support
 
 #### Display
 - 📜 Continuous scrolling text
@@ -152,7 +152,7 @@ esptool.py --port COM3 --baud 115200 write_flash 0x0 tc001_backup.bin
 
 ### 3. Upload Firmware
 
-1. Open the `TC001_Custom.ino` sketch in Arduino IDE
+1. Open the `Ulanzi-TC001-API-Monitor.ino` sketch in Arduino IDE
 2. Configure board settings:
    - **Tools → Board → ESP32 Arduino → ESP32 Dev Module**
    - **Tools → Port →** Select your TC001's COM port
@@ -164,7 +164,7 @@ esptool.py --port COM3 --baud 115200 write_flash 0x0 tc001_backup.bin
 1. Device will create WiFi AP: `TC001-XXXXXX`
 2. Connect to this AP with your phone/computer
 3. Captive portal should open automatically (or navigate to `192.168.4.1`)
-4. Enter your WiFi credentials
+4. Configure your WiFi credentials
 5. Device will connect and display its IP address
 6. Browse to the displayed IP address to configure API settings
 
@@ -172,7 +172,7 @@ esptool.py --port COM3 --baud 115200 write_flash 0x0 tc001_backup.bin
 
 ### Web Interface Configuration
 
-Navigate to your device's IP address (displayed on the LED matrix) to access the configuration interface.
+Navigate to your TC001's IP address (displayed on the LED matrix) to access the configuration interface.
 
 #### API Settings
 
@@ -283,7 +283,6 @@ Your API must meet these requirements:
 
 ### Optional
 - ⚙️ Header-based authentication (APIKey, Authorization, etc.)
-- ⚙️ Support for custom headers
 
 ### Response Format
 The API can return any valid JSON structure. Use the JSON path configuration to navigate to your desired value. Values can be:
@@ -321,8 +320,8 @@ Device will restart in AP mode for reconfiguration.
 Currently single-file Arduino sketch:
 ```
 TC001_Custom/
-├── TC001_Custom.ino    # Main firmware file
-└── README.md           # This file
+├── Ulanzi-TC001-API-Monitor.ino    # Main firmware file
+└── README.md                       # This file
 ```
 
 ### Code Organization
@@ -369,25 +368,14 @@ The firmware can be extended with:
 Planned features for future releases:
 
 ### High Priority
-- [ ] Multiple API endpoint support with button navigation
+- [ ] Multiple API endpoint support with button or autoscroll navigation
 - [ ] 8x8 icon display alongside values
-- [ ] HTTPS/SSL support for secure APIs
-- [ ] Value formatting options (commas, decimals, units)
-- [ ] Brightness adjustment
-
-### Medium Priority
-- [ ] Threshold-based color coding
-- [ ] OAuth/Bearer token authentication
-- [ ] Time-based display modes
-- [ ] Data caching for offline operation
+- [ ] Scrolling or Static screens for each API endpoint
+- [ ] Brightness adjustment, ideally automatic based on light sensor
 - [ ] Display rotation modes
 
 ### Low Priority
 - [ ] OTA (Over-The-Air) firmware updates
-- [ ] Historical data graphing
-- [ ] Multi-value display with auto-rotation
-- [ ] MQTT support
-- [ ] Home Assistant integration
 
 ## Troubleshooting
 
@@ -427,7 +415,7 @@ Planned features for future releases:
 **Symptoms:** Can't browse to device's IP address
 
 **Solutions:**
-1. Verify device is on same network as your computer
+1. Verify device is on same network as your computer/phone
 2. Check IP address shown on LED display
 3. Try pinging the device: `ping 192.168.x.x`
 4. Factory reset and reconfigure if needed
@@ -453,26 +441,17 @@ Connect USB and open Serial Monitor (115200 baud) to see:
 - API keys stored in plaintext in NVS
 - Keys only masked in web UI display
 - Consider encryption for highly sensitive deployments
-- Use HTTPS endpoints when possible (future feature)
+- Use HTTPS endpoints when possible
 
 ### Network Requirements
 - Requires 2.4GHz WiFi (ESP32 limitation)
 - Outbound HTTP/HTTPS connectivity needed
 - No incoming connections required
-- Works on networks with captive portals after initial auth
-
-### Performance
-- Memory: ~280KB flash, ~40KB RAM
-- API polling: Configurable 5-3600 second intervals
-- Display refresh: 50ms per scroll frame
-- Web interface: Minimal resource usage
+- Probably won't work on networks with captive portals
 
 ## Contributing
 
 Contributions welcome! Areas for improvement:
-- Additional authentication methods
-- Display effects and animations
-- Multi-API support
 - Documentation improvements
 - Bug fixes and testing
 
@@ -491,7 +470,7 @@ This project is open source and available under the MIT License.
 ## Support
 
 For issues, questions, or feature requests:
-- Open an issue on GitHub
+- Open an issue here on GitHub
 - Check existing issues for solutions
 - Consult the troubleshooting section above
 
@@ -501,7 +480,3 @@ For issues, questions, or feature requests:
 - Device Name Format: `TC001-Display-XXXXXX`
 - AP Name Format: `TC001-XXXXXX`
 - Where XXXXXX = Last 6 characters of MAC address
-
-**Version:** 1.0.0  
-**Last Updated:** 2025-11-03  
-**Compatible Hardware:** Ulanzi TC001 Pixel Display Clock

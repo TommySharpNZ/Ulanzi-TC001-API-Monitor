@@ -60,6 +60,24 @@ int16_t scrollX = MATRIX_WIDTH;
 unsigned long lastScrollUpdate = 0;
 const int scrollDelay = 50;
 
+// Config mode flag and message
+bool inConfigMode = false;
+String configModeMessage = "";
+TaskHandle_t displayTaskHandle = NULL;
+
+// Task for continuous display updates during config mode
+void displayUpdateTask(void * parameter) {
+  while(true) {
+    if (inConfigMode) {
+      if (millis() - lastScrollUpdate > scrollDelay) {
+        scrollCurrentValue();
+        lastScrollUpdate = millis();
+      }
+    }
+    vTaskDelay(10 / portTICK_PERIOD_MS); // Delay 10ms
+  }
+}
+
 void setup() {
   Serial.begin(115200);
   Serial.println("\n\nTC001 Custom Firmware Starting...");
@@ -102,12 +120,31 @@ void setup() {
   String apName = "TC001-" + deviceID;
   wifiManager.setAPCallback(configModeCallback);
   
+  // Set a reasonable timeout (3 minutes)
+  wifiManager.setConfigPortalTimeout(180);
+  
+  // Start autoConnect - this will block, but our task will handle display updates
   if (!wifiManager.autoConnect(apName.c_str())) {
     Serial.println("Failed to connect and hit timeout");
+    
+    // Stop display task if running
+    if (displayTaskHandle != NULL) {
+      vTaskDelete(displayTaskHandle);
+      displayTaskHandle = NULL;
+    }
+    
     displayScrollText("WIFI FAIL", matrix.Color(255, 0, 0));
     delay(3000);
     ESP.restart();
   }
+  
+  // Connected - stop the display task and clear config mode flag
+  if (displayTaskHandle != NULL) {
+    vTaskDelete(displayTaskHandle);
+    displayTaskHandle = NULL;
+    Serial.println("Display update task deleted");
+  }
+  inConfigMode = false;
   
   // Connected!
   Serial.println("Connected to WiFi!");
@@ -300,17 +337,21 @@ String extractJSONValue(String json, String path) {
 void scrollCurrentValue() {
   matrix.fillScreen(0);
   
-  String displayText = displayPrefix + currentValue;
-  
-  // Choose color based on state
+  String displayText;
   uint16_t color;
-  if (lastError.length() > 0) {
-    color = matrix.Color(255, 0, 0); // Red for errors
+  
+  // Check if in config mode first
+  if (inConfigMode) {
+    displayText = configModeMessage;
+    color = matrix.Color(255, 255, 0); // Yellow for config mode
+  } else if (lastError.length() > 0) {
     displayText = lastError;
+    color = matrix.Color(255, 0, 0); // Red for errors
   } else if (!apiConfigured) {
-    color = matrix.Color(255, 255, 0); // Yellow for not configured
     displayText = "NOT CONFIGURED";
+    color = matrix.Color(255, 255, 0); // Yellow for not configured
   } else {
+    displayText = displayPrefix + currentValue;
     color = matrix.Color(0, 255, 0); // Green for normal
   }
   
@@ -335,9 +376,17 @@ void checkConfigMode() {
     
     WiFiManager wifiManager;
     wifiManager.resetSettings();
+    wifiManager.setAPCallback(configModeCallback);
     
     String apName = "TC001-" + deviceID;
     wifiManager.startConfigPortal(apName.c_str());
+    
+    // If portal exits, stop the display task
+    if (displayTaskHandle != NULL) {
+      vTaskDelete(displayTaskHandle);
+      displayTaskHandle = NULL;
+    }
+    inConfigMode = false;
   }
 }
 
@@ -378,7 +427,24 @@ void configModeCallback(WiFiManager *myWiFiManager) {
   Serial.println(WiFi.softAPIP());
   
   String apName = "TC001-" + deviceID;
-  displayScrollText(("CONNECT TO: " + apName).c_str(), matrix.Color(255, 255, 0));
+  inConfigMode = true;
+  configModeMessage = "CONNECT TO: " + apName;
+  
+  // Reset scroll position for continuous scrolling
+  scrollX = MATRIX_WIDTH;
+  
+  // Create FreeRTOS task for display updates while in config portal
+  if (displayTaskHandle == NULL) {
+    xTaskCreate(
+      displayUpdateTask,      // Task function
+      "DisplayTask",          // Task name
+      4096,                   // Stack size
+      NULL,                   // Parameters
+      1,                      // Priority
+      &displayTaskHandle      // Task handle
+    );
+    Serial.println("Display update task created");
+  }
 }
 
 void setupWebServer() {

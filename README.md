@@ -24,7 +24,7 @@ Custom firmware for the Ulanzi TC001 pixel display clock that enables portable A
 The TC001 Custom Firmware transforms your Ulanzi TC001 into a self-contained API monitoring device. Perfect for scenarios where you need portable, at-a-glance monitoring without relying on external infrastructure.
 
 **Key Use Cases:**
-- Markets : Social media followers
+- Markets: Social media followers
 - Trade show booth metrics (visitor counts, lead generation)
 - Support ticket monitoring on the go
 - Real-time sales dashboards
@@ -67,21 +67,32 @@ AWTRIX requires an external server to POST data to the device. This firmware pol
 - 🔗 Direct API polling (no external server needed)
 - 🔐 Custom header authentication support
 - ⏱️ Configurable polling intervals (5-3600 seconds)
-- 🧭 Flexible JSON path navigation
+- 🧭 Flexible JSON path navigation with array filtering
 - 📊 Support for nested objects and arrays
+- 🔍 Array filtering by field values (e.g., `users[name=John].age`)
 - ✅ HTTPS support
 
 #### Display
-- 📜 Continuous scrolling text
+- 📜 Scrolling or static display modes
 - 🎨 Color-coded status (green=ok, red=error, yellow=warning)
-- 🏷️ Optional display prefixes
+- 🖼️ 8x8 icon support (scrolls with text)
+- 🏷️ Optional display prefix and suffix
 - 📱 Real-time value updates
+- 🎯 Automatic centering in static mode
+
+#### Icon Support
+- 🎨 8x8 pixel RGB icons
+- 🔄 Icons scroll with text
+- 📋 JSON array format: `[[r,g,b],[r,g,b],...]`
+- 👁️ Live preview in configuration interface
+- 💾 Stored locally (no external dependencies)
 
 #### Web Interface
 - ⚙️ Full configuration page
 - 🧪 API connection testing
 - 📊 Status monitoring
 - 🔄 Factory reset option
+- 👁️ Icon preview before saving
 
 #### Security
 - 🔒 Secure NVS storage for API keys
@@ -181,13 +192,16 @@ Navigate to your TC001's IP address (displayed on the LED matrix) to access the 
 | **API Endpoint URL** | Full URL to your API | `https://api.example.com/data` |
 | **API Header Name** | Authentication header name | `APIKey`, `Authorization`, `X-API-Key` |
 | **API Key** | Your API authentication key | `your-secret-key-here` |
-| **JSON Path** | Path to value in JSON response | `TC001MatrixDisplay[0].OpenRequests` |
+| **JSON Path** | Path to value in JSON response | `OverdueWorkflows[Username=John].Overdue` |
 | **Display Prefix** | Text before the value (optional) | `Tickets: ` |
+| **Display Suffix** | Text after the value (optional) | ` open` |
+| **Icon Data** | 8x8 RGB icon as JSON array (optional) | `[[255,0,0],[0,255,0],...]` |
+| **Enable Scrolling** | Checkbox for scroll vs static mode | Checked = scrolling (default) |
 | **Polling Interval** | Seconds between API calls | `60` (range: 5-3600) |
 
 ### JSON Path Examples
 
-The firmware supports flexible JSON path navigation:
+The firmware supports flexible JSON path navigation with array filtering:
 
 **Simple root level:**
 ```json
@@ -201,11 +215,22 @@ JSON Path: `count`
 ```
 JSON Path: `data.unassigned`
 
-**Array access:**
+**Array access by index:**
 ```json
 { "results": [{ "value": 99 }] }
 ```
 JSON Path: `results[0].value`
+
+**Array filtering by field value:**
+```json
+{
+  "OverdueWorkflows": [
+    { "Username": "John", "Overdue": 5 },
+    { "Username": "Jane", "Overdue": 12 }
+  ]
+}
+```
+JSON Path: `OverdueWorkflows[Username=Jane].Overdue`
 
 **Complex nested:**
 ```json
@@ -216,6 +241,42 @@ JSON Path: `results[0].value`
 }
 ```
 JSON Path: `TC001MatrixDisplay[0].OpenRequests`
+
+### Array Filtering Syntax
+
+Use the format `arrayName[fieldName=value]` to filter arrays:
+- `users[name=John].age` - Find user with name "John" and get their age
+- `products[id=12345].price` - Find product with id "12345" and get price
+- `tickets[status=open].count` - Find ticket with status "open" and get count
+
+This searches through the array and returns the first object where the field matches the value.
+
+### Icon Configuration
+
+Icons are 8x8 pixels in RGB format. The JSON array should contain exactly 64 pixel values:
+
+```json
+[[255,0,0],[255,0,0],[0,0,0],[0,0,0],[0,0,0],[0,0,0],[255,0,0],[255,0,0],
+ [255,0,0],[255,0,0],[0,0,0],[0,0,0],[0,0,0],[0,0,0],[255,0,0],[255,0,0],
+ ...64 total pixels...]
+```
+
+Each pixel is `[red, green, blue]` with values 0-255.
+
+The web interface provides a live preview of your icon before saving. Icons scroll alongside the text when scrolling is enabled, or display static with centered text when scrolling is disabled.
+
+### Display Modes
+
+**Scrolling Mode (default):**
+- Icon and text scroll continuously from right to left
+- Ideal for longer text or when you want continuous motion
+- Full content visibility over time
+
+**Static Mode:**
+- Content is centered on the display
+- Perfect for short displays (e.g., icon + number)
+- If content is wider than 32 pixels, it left-aligns
+- Ideal for at-a-glance monitoring
 
 ### Testing API Connection
 
@@ -232,7 +293,7 @@ Before saving, use the **Test Connection** button to verify:
 Once configured, the device will:
 1. Auto-connect to saved WiFi on startup
 2. Begin polling the API at configured intervals
-3. Display the current value continuously (scrolling)
+3. Display the current value (scrolling or static based on settings)
 4. Update automatically when new data arrives
 5. Show error messages if API fails
 
@@ -244,10 +305,9 @@ Once configured, the device will:
 | 🔴 Red | Error state (connection failed, parsing error) |
 | 🟡 Yellow | Not configured or warning |
 
-### Example Configuration
+### Example Configurations
 
-For a support ticket API:
-
+#### Example 1: Support Tickets (Scrolling with Icon)
 **API Response:**
 ```json
 {
@@ -255,9 +315,7 @@ For a support ticket API:
   "Summary": "OK",
   "RecordCount": 1,
   "TC001MatrixDisplay": [
-    {
-      "OpenRequests": 12
-    }
+    { "OpenRequests": 12 }
   ]
 }
 ```
@@ -268,9 +326,57 @@ For a support ticket API:
 - API Key: `Bi...5#`
 - JSON Path: `TC001MatrixDisplay[0].OpenRequests`
 - Display Prefix: `Tickets: `
+- Display Suffix: ` open`
+- Icon Data: `[[...]]` (ticket icon)
+- Enable Scrolling: ✅ Checked
 - Polling Interval: `60`
 
-**Result:** Display shows "Tickets: 12" scrolling continuously, updates every 60 seconds.
+**Result:** Icon and "Tickets: 12 open" scroll continuously, updates every 60 seconds.
+
+#### Example 2: Personal Workflow Count (Static Display)
+**API Response:**
+```json
+{
+  "OverdueWorkflows": [
+    { "Username": "Binai Prasad", "Overdue": 1, "Today": 0 },
+    { "Username": "John Smith", "Overdue": 5, "Today": 2 }
+  ]
+}
+```
+
+**Configuration:**
+- API Endpoint: `https://workflow.company.com/api/stats`
+- JSON Path: `OverdueWorkflows[Username=Binai Prasad].Overdue`
+- Display Prefix: `` (empty)
+- Display Suffix: `` (empty)
+- Icon Data: `[[...]]` (person icon)
+- Enable Scrolling: ⬜ Unchecked (static)
+- Polling Interval: `300`
+
+**Result:** Icon and number "1" centered on display, updates every 5 minutes.
+
+#### Example 3: Bitcoin Price
+**API Response:**
+```json
+{
+  "bpi": {
+    "USD": {
+      "rate_float": 43250.5432
+    }
+  }
+}
+```
+
+**Configuration:**
+- API Endpoint: `https://api.coindesk.com/v1/bpi/currentprice/BTC.json`
+- API Key: (leave blank - no auth needed)
+- JSON Path: `bpi.USD.rate_float`
+- Display Prefix: `BTC: $`
+- Display Suffix: `` (empty)
+- Enable Scrolling: ✅ Checked
+- Polling Interval: `120`
+
+**Result:** "BTC: $43250.5432" scrolls continuously, updates every 2 minutes.
 
 ## API Requirements
 
@@ -309,6 +415,7 @@ Two ways to factory reset:
 Factory reset clears:
 - ✅ WiFi credentials
 - ✅ API configuration
+- ✅ Icon data
 - ✅ All stored settings
 
 Device will restart in AP mode for reconfiguration.
@@ -329,8 +436,9 @@ TC001_Custom/
 Main components:
 - **WiFi Management** - WiFiManager integration, AP mode
 - **Web Server** - Configuration interface, status pages
-- **API Client** - HTTP requests, JSON parsing
-- **Display Manager** - LED matrix control, scrolling text
+- **API Client** - HTTP requests, JSON parsing with array filtering
+- **Display Manager** - LED matrix control, scrolling and static modes
+- **Icon Handler** - JSON icon parsing, RGB565 conversion, rendering
 - **Storage** - NVS preferences for configuration
 - **Button Handler** - Physical button controls
 
@@ -338,8 +446,9 @@ Main components:
 
 ```cpp
 void pollAPI()                    // Make API request and parse response
-String extractJSONValue()         // Navigate JSON path and extract value
-void scrollCurrentValue()         // Update LED display
+String extractJSONValue()         // Navigate JSON path and extract value (supports filtering)
+void scrollCurrentValue()         // Update LED display (scroll or static)
+void parseIconData()              // Parse JSON icon array to RGB565
 void loadConfiguration()          // Load settings from NVS
 void saveConfiguration()          // Save settings to NVS
 void handleConfigPage()           // Serve web configuration page
@@ -350,15 +459,15 @@ void handleConfigPage()           // Serve web configuration page
 The firmware can be extended with:
 - Multiple API endpoints (button navigation)
 - Custom display modes
-- Icon support
 - Threshold-based color coding
 - Data visualization
 - Historical trending
+- Animation sequences
 
 ### Building From Source
 
 1. Clone the repository
-2. Open `TC001_Custom.ino` in Arduino IDE
+2. Open `Ulanzi-TC001-API-Monitor.ino` in Arduino IDE
 3. Install required libraries
 4. Select ESP32 Dev Module board
 5. Compile and upload
@@ -368,14 +477,21 @@ The firmware can be extended with:
 Planned features for future releases:
 
 ### High Priority
-- [ ] Multiple API endpoint support with button or autoscroll navigation
-- [ ] 8x8 icon display alongside values
-- [ ] Scrolling or Static screens for each API endpoint
-- [ ] Brightness adjustment, ideally automatic based on light sensor
+- [ ] Multiple API endpoint support with button navigation
+- [ ] Brightness adjustment (automatic based on light sensor)
 - [ ] Display rotation modes
+- [ ] Icon animation support
+
+### Medium Priority
+- [ ] Multiple display pages with auto-rotation
+- [ ] Threshold-based color coding (e.g., red if value > 10)
+- [ ] Time display option
+- [ ] Temperature/weather display
 
 ### Low Priority
 - [ ] OTA (Over-The-Air) firmware updates
+- [ ] MQTT support
+- [ ] Historical data graphing
 
 ## Troubleshooting
 
@@ -409,6 +525,18 @@ Planned features for future releases:
 2. Use "Test Connection" to see raw API response
 3. Check for array indices starting at 0
 4. Ensure nested object paths use correct notation
+5. For array filtering, verify field names and values match exactly
+
+### Icon Not Displaying
+
+**Symptoms:** Icon doesn't appear or shows incorrectly
+
+**Solutions:**
+1. Verify JSON array has exactly 64 pixels
+2. Check preview in web interface before saving
+3. Ensure each pixel is `[r,g,b]` format with values 0-255
+4. Clear icon data field and re-paste if corrupted
+5. Check serial monitor for icon parsing errors
 
 ### Can't Access Web Interface
 
@@ -418,7 +546,8 @@ Planned features for future releases:
 1. Verify device is on same network as your computer/phone
 2. Check IP address shown on LED display
 3. Try pinging the device: `ping 192.168.x.x`
-4. Factory reset and reconfigure if needed
+4. Reboot the device (power cycle)
+5. Factory reset and reconfigure if needed
 
 ### Serial Monitor Debug
 
@@ -427,6 +556,7 @@ Connect USB and open Serial Monitor (115200 baud) to see:
 - WiFi connection status
 - API request/response details
 - JSON parsing results
+- Icon parsing status
 - Error messages
 
 ## Technical Notes
@@ -436,6 +566,7 @@ Connect USB and open Serial Monitor (115200 baud) to see:
 - API settings stored in custom NVS namespace: `tc001`
 - Settings persist across firmware updates
 - Factory reset clears both WiFi and custom NVS
+- Icon data stored as JSON string (max ~512 bytes)
 
 ### Security Considerations
 - API keys stored in plaintext in NVS
@@ -447,13 +578,22 @@ Connect USB and open Serial Monitor (115200 baud) to see:
 - Requires 2.4GHz WiFi (ESP32 limitation)
 - Outbound HTTP/HTTPS connectivity needed
 - No incoming connections required
-- Probably won't work on networks with captive portals
+- May not work on networks with captive portals
+
+### Performance
+- Typical API response time: 200-500ms
+- Display update rate: 50ms per scroll step (scrolling mode)
+- Static mode: Updates every 1 second
+- Memory usage: ~150KB RAM with icon loaded
 
 ## Contributing
 
 Contributions welcome! Areas for improvement:
 - Documentation improvements
 - Bug fixes and testing
+- New features
+- Icon library
+- Example configurations
 
 ## License
 
@@ -470,7 +610,7 @@ This project is open source and available under the MIT License.
 ## Support
 
 For issues, questions, or feature requests:
-- Open an issue here on GitHub
+- Open an issue on GitHub
 - Check existing issues for solutions
 - Consult the troubleshooting section above
 

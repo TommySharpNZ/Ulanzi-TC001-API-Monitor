@@ -18,6 +18,8 @@
 // Matrix configuration
 #define MATRIX_WIDTH 32
 #define MATRIX_HEIGHT 8
+#define ICON_WIDTH 8
+#define TEXT_WIDTH 24
 
 // Create matrix object
 Adafruit_NeoMatrix matrix = Adafruit_NeoMatrix(
@@ -43,7 +45,14 @@ String apiKey = "";
 String apiHeaderName = "APIKey";
 String jsonPath = "";
 String displayPrefix = "";
+String displaySuffix = "";
 int pollingInterval = 60; // seconds
+bool scrollEnabled = true; // true = scroll, false = static display
+
+// Icon configuration
+String iconData = ""; // JSON array format: [[r,g,b],[r,g,b],...]
+bool iconEnabled = false;
+uint16_t iconPixels[64]; // 8x8 icon in RGB565 format
 
 // API State
 String currentValue = "---";
@@ -192,11 +201,19 @@ void loadConfiguration() {
   apiHeaderName = preferences.getString("apiHeader", "APIKey");
   jsonPath = preferences.getString("jsonPath", "");
   displayPrefix = preferences.getString("prefix", "");
+  displaySuffix = preferences.getString("suffix", "");
   pollingInterval = preferences.getInt("interval", 60);
+  scrollEnabled = preferences.getBool("scroll", true);
+  iconData = preferences.getString("iconData", "");
   
   preferences.end();
   
   apiConfigured = (apiEndpoint.length() > 0 && jsonPath.length() > 0);
+  
+  // Parse icon data if present
+  if (iconData.length() > 0) {
+    parseIconData(iconData);
+  }
   
   if (apiConfigured) {
     Serial.println("API Configuration loaded:");
@@ -204,7 +221,10 @@ void loadConfiguration() {
     Serial.println("  Header: " + apiHeaderName);
     Serial.println("  JSON Path: " + jsonPath);
     Serial.println("  Prefix: " + displayPrefix);
+    Serial.println("  Suffix: " + displaySuffix);
     Serial.println("  Interval: " + String(pollingInterval) + "s");
+    Serial.println("  Scroll: " + String(scrollEnabled ? "Enabled" : "Disabled"));
+    Serial.println("  Icon: " + String(iconEnabled ? "Enabled" : "Disabled"));
   } else {
     Serial.println("No API configuration found");
   }
@@ -218,12 +238,56 @@ void saveConfiguration() {
   preferences.putString("apiHeader", apiHeaderName);
   preferences.putString("jsonPath", jsonPath);
   preferences.putString("prefix", displayPrefix);
+  preferences.putString("suffix", displaySuffix);
   preferences.putInt("interval", pollingInterval);
+  preferences.putBool("scroll", scrollEnabled);
+  preferences.putString("iconData", iconData);
   
   preferences.end();
   
   apiConfigured = (apiEndpoint.length() > 0 && jsonPath.length() > 0);
   Serial.println("Configuration saved");
+}
+
+void parseIconData(String data) {
+  if (data.length() == 0) {
+    iconEnabled = false;
+    return;
+  }
+  
+  // Parse JSON array: [[r,g,b],[r,g,b],...]
+  JsonDocument doc;
+  DeserializationError error = deserializeJson(doc, data);
+  
+  if (error) {
+    Serial.print("Icon JSON parsing failed: ");
+    Serial.println(error.c_str());
+    iconEnabled = false;
+    return;
+  }
+  
+  JsonArray array = doc.as<JsonArray>();
+  int pixelCount = 0;
+  
+  for (JsonArray pixel : array) {
+    if (pixelCount >= 64) break; // 8x8 = 64 pixels
+    
+    if (pixel.size() >= 3) {
+      uint8_t r = pixel[0];
+      uint8_t g = pixel[1];
+      uint8_t b = pixel[2];
+      iconPixels[pixelCount] = matrix.Color(r, g, b);
+      pixelCount++;
+    }
+  }
+  
+  iconEnabled = (pixelCount == 64);
+  
+  if (iconEnabled) {
+    Serial.println("Icon parsed successfully: 64 pixels");
+  } else {
+    Serial.printf("Icon parsing incomplete: %d pixels (need 64)\n", pixelCount);
+  }
 }
 
 void pollAPI() {
@@ -283,7 +347,7 @@ String extractJSONValue(String json, String path) {
   }
   
   // Navigate the JSON path
-  // Format: "key1.key2[0].key3"
+  // Format: "key1.key2[0].key3" or "key1[Username=Binai Prasad].key3"
   JsonVariant value = doc.as<JsonVariant>();
   
   int start = 0;
@@ -296,17 +360,56 @@ String extractJSONValue(String json, String path) {
     
     String segment = path.substring(start, end);
     
-    // Check if segment has array index
+    // Check if segment has array index or filter
     int bracketStart = segment.indexOf('[');
     if (bracketStart != -1) {
       int bracketEnd = segment.indexOf(']');
       String key = segment.substring(0, bracketStart);
-      int index = segment.substring(bracketStart + 1, bracketEnd).toInt();
+      String bracketContent = segment.substring(bracketStart + 1, bracketEnd);
       
-      if (key.length() > 0) {
-        value = value[key][index];
+      // Check if it's a filter (contains '=') or just an index
+      int equalsPos = bracketContent.indexOf('=');
+      
+      if (equalsPos != -1) {
+        // Array filter: key[fieldName=value]
+        String filterField = bracketContent.substring(0, equalsPos);
+        String filterValue = bracketContent.substring(equalsPos + 1);
+        
+        // Navigate to the array
+        if (key.length() > 0) {
+          value = value[key];
+        }
+        
+        // Search through array for matching item
+        if (value.is<JsonArray>()) {
+          JsonArray arr = value.as<JsonArray>();
+          bool found = false;
+          
+          for (JsonVariant item : arr) {
+            if (item[filterField].as<String>() == filterValue) {
+              value = item;
+              found = true;
+              break;
+            }
+          }
+          
+          if (!found) {
+            Serial.println("No matching item found for filter: " + filterField + "=" + filterValue);
+            return "";
+          }
+        } else {
+          Serial.println("Expected array for filtering but got different type");
+          return "";
+        }
       } else {
-        value = value[index];
+        // Regular array index: key[0]
+        int index = bracketContent.toInt();
+        
+        if (key.length() > 0) {
+          value = value[key][index];
+        } else {
+          value = value[index];
+        }
       }
     } else {
       value = value[segment];
@@ -351,20 +454,73 @@ void scrollCurrentValue() {
     displayText = "NOT CONFIGURED";
     color = matrix.Color(255, 255, 0); // Yellow for not configured
   } else {
-    displayText = displayPrefix + currentValue;
+    displayText = displayPrefix + currentValue + displaySuffix;
     color = matrix.Color(0, 255, 0); // Green for normal
   }
   
-  matrix.setTextColor(color);
-  matrix.setCursor(scrollX, 0);
-  matrix.print(displayText);
-  matrix.show();
-  
-  scrollX--;
-  
-  int16_t textWidth = displayText.length() * 6;
-  if (scrollX < -textWidth) {
-    scrollX = MATRIX_WIDTH;
+  if (scrollEnabled) {
+    // Scrolling mode
+    // Draw icon at scroll position if enabled
+    if (iconEnabled && !inConfigMode) {
+      // Draw icon at current scroll position
+      for (int y = 0; y < 8; y++) {
+        for (int x = 0; x < 8; x++) {
+          int pixelIndex = y * 8 + x;
+          int drawX = scrollX + x;
+          // Only draw if within visible area
+          if (drawX >= 0 && drawX < MATRIX_WIDTH) {
+            matrix.drawPixel(drawX, y, iconPixels[pixelIndex]);
+          }
+        }
+      }
+    }
+    
+    // Calculate text start position (after icon if enabled, with 1 pixel gap)
+    int textStartX = iconEnabled ? (scrollX + ICON_WIDTH + 1) : scrollX;
+    
+    matrix.setTextColor(color);
+    matrix.setCursor(textStartX, 0);  // y=0 for proper text rendering with descenders
+    matrix.print(displayText);
+    matrix.show();
+    
+    scrollX--;
+    
+    // Calculate total width: icon + gap + text (default font is 6 pixels per character)
+    int16_t textWidth = displayText.length() * 6;
+    int16_t totalWidth = iconEnabled ? (ICON_WIDTH + 1 + textWidth) : textWidth;
+    
+    // Reset scroll when content has fully passed
+    if (scrollX < -totalWidth) {
+      scrollX = MATRIX_WIDTH;
+    }
+  } else {
+    // Static mode - center the content
+    int16_t textWidth = displayText.length() * 6;
+    int16_t totalWidth = iconEnabled ? (ICON_WIDTH + 1 + textWidth) : textWidth;
+    
+    // Center the content
+    int startX = (MATRIX_WIDTH - totalWidth) / 2;
+    if (startX < 0) startX = 0; // If too wide, left-align
+    
+    // Draw icon if enabled
+    if (iconEnabled && !inConfigMode) {
+      for (int y = 0; y < 8; y++) {
+        for (int x = 0; x < 8; x++) {
+          int pixelIndex = y * 8 + x;
+          int drawX = startX + x;
+          if (drawX >= 0 && drawX < MATRIX_WIDTH) {
+            matrix.drawPixel(drawX, y, iconPixels[pixelIndex]);
+          }
+        }
+      }
+    }
+    
+    // Draw text
+    int textStartX = iconEnabled ? (startX + ICON_WIDTH + 1) : startX;
+    matrix.setTextColor(color);
+    matrix.setCursor(textStartX, 0);
+    matrix.print(displayText);
+    matrix.show();
   }
 }
 
@@ -484,20 +640,19 @@ void handleRoot() {
   html += ".status { padding: 15px; border-radius: 5px; margin: 10px 0; }";
   html += ".status.ok { background: #e8f5e9; color: #2e7d32; }";
   html += ".status.error { background: #ffebee; color: #c62828; }";
-  html += ".status.warning { background: #fff3e0; color: #ef6c00; }";
+  html += ".status.warning { background: #fff8e1; color: #f57f17; }";
   html += "</style>";
   html += "</head><body>";
   html += "<div class='container'>";
-  html += "<h1>TC001 Custom Display</h1>";
+  html += "<h1>" + deviceName + "</h1>";
   
   html += "<div class='info'>";
-  html += "<p><span class='label'>Device Name:</span> <span class='value'>" + deviceName + "</span></p>";
   html += "<p><span class='label'>Device ID:</span> <span class='value'>" + deviceID + "</span></p>";
   html += "<p><span class='label'>IP Address:</span> <span class='value'>" + ipAddress + "</span></p>";
   html += "<p><span class='label'>WiFi SSID:</span> <span class='value'>" + String(WiFi.SSID()) + "</span></p>";
+  html += "<p><span class='label'>Signal:</span> <span class='value'>" + String(WiFi.RSSI()) + " dBm</span></p>";
   html += "</div>";
   
-  // API Status
   String statusClass = "warning";
   String statusText = "Not Configured";
   
@@ -515,6 +670,8 @@ void handleRoot() {
   html += "<p><strong>API Status:</strong> " + statusText + "</p>";
   if (apiConfigured) {
     html += "<p><strong>Polling Interval:</strong> " + String(pollingInterval) + " seconds</p>";
+    html += "<p><strong>Display Mode:</strong> " + String(scrollEnabled ? "Scrolling" : "Static") + "</p>";
+    html += "<p><strong>Icon:</strong> " + String(iconEnabled ? "Enabled" : "Disabled") + "</p>";
   }
   html += "</div>";
   
@@ -556,13 +713,17 @@ void handleConfigPage() {
   html += "h1 { color: #333; border-bottom: 2px solid #4CAF50; padding-bottom: 10px; }";
   html += ".form-group { margin: 15px 0; }";
   html += "label { display: block; font-weight: bold; color: #666; margin-bottom: 5px; }";
-  html += "input[type='text'], input[type='password'], input[type='number'] { width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 5px; box-sizing: border-box; font-size: 1em; }";
+  html += "input[type='text'], input[type='password'], input[type='number'], textarea { width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 5px; box-sizing: border-box; font-size: 1em; font-family: monospace; }";
+  html += "input[type='checkbox'] { width: auto; margin-right: 8px; }";
+  html += "textarea { min-height: 100px; resize: vertical; }";
   html += ".button { background: #4CAF50; color: white; padding: 12px 24px; border: none; border-radius: 5px; cursor: pointer; font-size: 1em; margin: 10px 5px; }";
   html += ".button:hover { background: #45a049; }";
   html += ".button.secondary { background: #2196F3; }";
   html += ".button.secondary:hover { background: #0b7dda; }";
   html += ".help { font-size: 0.9em; color: #666; margin-top: 5px; }";
-  html += ".example { background: #f5f5f5; padding: 10px; border-radius: 5px; margin-top: 10px; font-family: monospace; }";
+  html += ".example { background: #f5f5f5; padding: 10px; border-radius: 5px; margin-top: 10px; font-family: monospace; font-size: 0.85em; }";
+  html += "#iconPreview { display: inline-block; margin: 10px 0; border: 1px solid #ddd; }";
+  html += ".icon-pixel { width: 20px; height: 20px; display: inline-block; }";
   html += "</style>";
   html += "</head><body>";
   html += "<div class='container'>";
@@ -592,13 +753,34 @@ void handleConfigPage() {
   html += "<label>JSON Path:</label>";
   html += "<input type='text' name='jsonPath' value='" + jsonPath + "' placeholder='data.value' required>";
   html += "<p class='help'>Path to the value in the JSON response</p>";
-  html += "<div class='example'>Examples:<br>count<br>data.unassigned<br>TC001MatrixDisplay[0].OpenRequests<br>results[0].value</div>";
+  html += "<div class='example'>Examples:<br>count<br>data.unassigned<br>TC001MatrixDisplay[0].OpenRequests<br>results[0].value<br><strong>Array filtering:</strong><br>OverdueWorkflows[Username=Binai Prasad].Overdue<br>users[name=John].age</div>";
   html += "</div>";
   
   html += "<div class='form-group'>";
   html += "<label>Display Prefix (optional):</label>";
   html += "<input type='text' name='prefix' value='" + displayPrefix + "' placeholder='Tickets: '>";
   html += "<p class='help'>Text to show before the value (e.g., 'Tickets: ' will display as 'Tickets: 42')</p>";
+  html += "</div>";
+  
+  html += "<div class='form-group'>";
+  html += "<label>Display Suffix (optional):</label>";
+  html += "<input type='text' name='suffix' value='" + displaySuffix + "' placeholder=' items'>";
+  html += "<p class='help'>Text to show after the value (e.g., ' items' will display as '42 items')</p>";
+  html += "</div>";
+  
+  html += "<div class='form-group'>";
+  html += "<label>";
+  html += "<input type='checkbox' name='scroll' value='1' " + String(scrollEnabled ? "checked" : "") + "> Enable Scrolling";
+  html += "</label>";
+  html += "<p class='help'>When checked, content scrolls continuously. When unchecked, content is centered and static.</p>";
+  html += "</div>";
+  
+  html += "<div class='form-group'>";
+  html += "<label>Icon Data (optional):</label>";
+  html += "<textarea name='iconData' id='iconData' placeholder='[[255,0,0],[0,255,0],...]'>" + iconData + "</textarea>";
+  html += "<p class='help'>8x8 icon as JSON array (64 pixels). Format: [[r,g,b],[r,g,b],...] Leave blank to disable icon.</p>";
+  html += "<div class='example'>Create icons using any pixel art tool that exports RGB arrays, or manually create the 64-pixel array.</div>";
+  html += "<div id='iconPreview'></div>";
   html += "</div>";
   
   html += "<div class='form-group'>";
@@ -626,6 +808,36 @@ void handleConfigPage() {
   html += "    document.getElementById('testResult').innerHTML = '<div class=\"status error\">Error: ' + err + '</div>';";
   html += "  });";
   html += "}";
+  
+  html += "document.getElementById('iconData').addEventListener('input', function() {";
+  html += "  try {";
+  html += "    const data = JSON.parse(this.value);";
+  html += "    if (Array.isArray(data) && data.length === 64) {";
+  html += "      let preview = '<div>';";
+  html += "      for (let i = 0; i < 8; i++) {";
+  html += "        for (let j = 0; j < 8; j++) {";
+  html += "          const pixel = data[i * 8 + j];";
+  html += "          if (Array.isArray(pixel) && pixel.length >= 3) {";
+  html += "            const color = 'rgb(' + pixel[0] + ',' + pixel[1] + ',' + pixel[2] + ')';";
+  html += "            preview += '<div class=\"icon-pixel\" style=\"background-color:' + color + '\"></div>';";
+  html += "          }";
+  html += "        }";
+  html += "        preview += '<br>';";
+  html += "      }";
+  html += "      preview += '</div>';";
+  html += "      document.getElementById('iconPreview').innerHTML = preview;";
+  html += "    } else {";
+  html += "      document.getElementById('iconPreview').innerHTML = '<p style=\"color:red\">Invalid: Need exactly 64 pixels</p>';";
+  html += "    }";
+  html += "  } catch(e) {";
+  html += "    document.getElementById('iconPreview').innerHTML = '';";
+  html += "  }";
+  html += "});";
+  
+  html += "window.addEventListener('load', function() {";
+  html += "  document.getElementById('iconData').dispatchEvent(new Event('input'));";
+  html += "});";
+  
   html += "</script>";
   
   html += "</body></html>";
@@ -639,15 +851,26 @@ void handleSaveConfig() {
   apiKey = server.arg("apiKey");
   jsonPath = server.arg("jsonPath");
   displayPrefix = server.arg("prefix");
+  displaySuffix = server.arg("suffix");
   pollingInterval = server.arg("interval").toInt();
+  scrollEnabled = server.hasArg("scroll"); // Checkbox: present = checked, absent = unchecked
+  iconData = server.arg("iconData");
   
   if (pollingInterval < 5) pollingInterval = 5;
   if (pollingInterval > 3600) pollingInterval = 3600;
   
+  // Parse icon data if provided, otherwise clear icon
+  if (iconData.length() > 0) {
+    parseIconData(iconData);
+  } else {
+    iconEnabled = false;
+  }
+  
   saveConfiguration();
   
-  // Trigger immediate API poll
+  // Trigger immediate API poll and reset scroll
   lastAPICall = 0;
+  scrollX = MATRIX_WIDTH;
   
   String html = "<!DOCTYPE html><html><head>";
   html += "<meta http-equiv='refresh' content='2;url=/'>";
@@ -730,6 +953,7 @@ void handleStatus() {
   json += "\"ssid\":\"" + String(WiFi.SSID()) + "\",";
   json += "\"rssi\":" + String(WiFi.RSSI()) + ",";
   json += "\"api_configured\":" + String(apiConfigured ? "true" : "false") + ",";
+  json += "\"icon_enabled\":" + String(iconEnabled ? "true" : "false") + ",";
   json += "\"current_value\":\"" + currentValue + "\",";
   json += "\"last_error\":\"" + lastError + "\"";
   json += "}";

@@ -79,6 +79,16 @@ AWTRIX requires an external server to POST data to the device. This firmware pol
 - 🏷️ Optional display prefix and suffix
 - 📱 Real-time value updates
 - 🎯 Automatic centering in static mode
+- ⚡ Immediate API polling on startup (no waiting for first interval)
+
+#### Brightness Control
+- 🌞 Auto brightness using onboard light sensor
+- 🎚️ Manual brightness slider (1-255)
+- 🌙 Adaptive dimming for dark environments (as low as brightness 1)
+- ☀️ Automatic brightening in daylight (up to brightness 255)
+- 🎯 Non-linear curve optimized for indoor use
+- 💾 Brightness settings persist across reboots
+- 🔄 Real-time brightness updates every 100ms in auto mode
 
 #### Icon Support
 - 🎨 8x8 pixel RGB icons
@@ -198,6 +208,8 @@ Navigate to your TC001's IP address (displayed on the LED matrix) to access the 
 | **Icon Data** | 8x8 RGB icon as JSON array (optional) | `[[255,0,0],[0,255,0],...]` |
 | **Enable Scrolling** | Checkbox for scroll vs static mode | Checked = scrolling (default) |
 | **Polling Interval** | Seconds between API calls | `60` (range: 5-3600) |
+| **Auto Brightness** | Checkbox for automatic brightness control | Checked = use light sensor, Unchecked = manual |
+| **Manual Brightness** | Slider for brightness level (when auto disabled) | `40` (range: 1-255) |
 
 ### JSON Path Examples
 
@@ -278,6 +290,30 @@ The web interface provides a live preview of your icon before saving. Icons scro
 - If content is wider than 32 pixels, it left-aligns
 - Ideal for at-a-glance monitoring
 
+### Brightness Configuration
+
+The TC001 offers two brightness control modes to suit different environments and preferences.
+
+**Auto Brightness Mode (Recommended):**
+- Uses the onboard light sensor (GPIO35) to automatically adjust brightness
+- Adapts in real-time to ambient lighting conditions
+- Brightness ranges:
+  - **Very dark** (sensor 0-100): Brightness 1-5 (very dim for nighttime)
+  - **Dim room** (sensor 100-500): Brightness 5-30 (low for dark rooms)
+  - **Normal indoor** (sensor 500-2000): Brightness 30-120 (comfortable for typical indoor lighting)
+  - **Bright light** (sensor 2000-4095): Brightness 120-255 (high for daylight/bright rooms)
+- Updates every 100ms for smooth transitions
+- Perfect for displays in rooms with varying light throughout the day
+
+**Manual Brightness Mode:**
+- Fixed brightness level set via slider (1-255)
+- Brightness 1 = barely visible (ideal for very dark rooms)
+- Brightness 40-80 = comfortable for normal indoor use
+- Brightness 150-255 = very bright (for well-lit areas or outdoor use)
+- Useful when consistent brightness is preferred
+
+**Tip:** Start with auto brightness mode and observe the display throughout the day. If you find it too bright or dim at certain times, you can switch to manual mode and set your preferred level.
+
 ### Testing API Connection
 
 Before saving, use the **Test Connection** button to verify:
@@ -330,8 +366,10 @@ Once configured, the device will:
 - Icon Data: `[[...]]` (ticket icon)
 - Enable Scrolling: ✅ Checked
 - Polling Interval: `60`
+- Auto Brightness: ✅ Checked
+- Manual Brightness: N/A (auto mode)
 
-**Result:** Icon and "Tickets: 12 open" scroll continuously, updates every 60 seconds.
+**Result:** Icon and "Tickets: 12 open" scroll continuously, updates every 60 seconds, brightness adjusts automatically to room lighting.
 
 #### Example 2: Personal Workflow Count (Static Display)
 **API Response:**
@@ -352,8 +390,10 @@ Once configured, the device will:
 - Icon Data: `[[...]]` (person icon)
 - Enable Scrolling: ⬜ Unchecked (static)
 - Polling Interval: `300`
+- Auto Brightness: ⬜ Unchecked
+- Manual Brightness: `80`
 
-**Result:** Icon and number "1" centered on display, updates every 5 minutes.
+**Result:** Icon and number "1" centered on display, updates every 5 minutes, fixed brightness at 80 for consistent visibility.
 
 #### Example 3: Bitcoin Price
 **API Response:**
@@ -375,8 +415,10 @@ Once configured, the device will:
 - Display Suffix: `` (empty)
 - Enable Scrolling: ✅ Checked
 - Polling Interval: `120`
+- Auto Brightness: ✅ Checked
+- Manual Brightness: N/A (auto mode)
 
-**Result:** "BTC: $43250.5432" scrolls continuously, updates every 2 minutes.
+**Result:** "BTC: $43250.5432" scrolls continuously, updates every 2 minutes, brightness adapts to lighting conditions.
 
 ## API Requirements
 
@@ -478,7 +520,7 @@ Planned features for future releases:
 
 ### High Priority
 - [ ] Multiple API endpoint support with button navigation
-- [ ] Brightness adjustment (automatic based on light sensor)
+- [x] ~~Brightness adjustment (automatic based on light sensor)~~ **✅ IMPLEMENTED**
 - [ ] Display rotation modes
 - [ ] Icon animation support
 
@@ -549,6 +591,25 @@ Planned features for future releases:
 4. Reboot the device (power cycle)
 5. Factory reset and reconfigure if needed
 
+### Brightness Issues
+
+**Symptoms:** Display too bright/dim, or auto brightness not working correctly
+
+**Solutions:**
+1. **Auto mode too bright in dark:** This is expected - the sensor values may need fine-tuning for your environment. Check serial monitor for sensor readings and adjust the ranges in `updateBrightness()` function
+2. **Auto mode not responding:** Verify light sensor isn't physically covered by case or obstructed
+3. **Manual mode not working:** Check that "Auto Brightness" checkbox is unchecked in configuration
+4. **Display too dim:** Increase manual brightness slider value (try 80-150 for normal indoor use)
+5. **Want different brightness curve:** Uncomment debug lines in `updateBrightness()` to see sensor values, then adjust the mapping ranges to suit your environment
+
+**Debug Auto Brightness:**
+To see actual light sensor readings, uncomment these lines in the code:
+```cpp
+Serial.print("Light sensor: ");
+Serial.println(sensorValue);
+```
+Then open Serial Monitor (115200 baud) to view real-time sensor values and corresponding brightness levels.
+
 ### Serial Monitor Debug
 
 Connect USB and open Serial Monitor (115200 baud) to see:
@@ -584,7 +645,19 @@ Connect USB and open Serial Monitor (115200 baud) to see:
 - Typical API response time: 200-500ms
 - Display update rate: 50ms per scroll step (scrolling mode)
 - Static mode: Updates every 1 second
+- Auto brightness: Updates every 100ms
 - Memory usage: ~150KB RAM with icon loaded
+
+### Brightness Control Details
+- Light sensor: 12-bit ADC (0-4095 range) on GPIO35
+- Auto mode brightness mapping:
+  - Very dark (0-100): Brightness 1-5
+  - Dim room (100-500): Brightness 5-30
+  - Normal indoor (500-2000): Brightness 30-120
+  - Bright light (2000-4095): Brightness 120-255
+- Manual mode: Direct brightness control (1-255)
+- Brightness settings stored in NVS, persist across reboots
+- Updates apply immediately upon saving configuration
 
 ## Contributing
 

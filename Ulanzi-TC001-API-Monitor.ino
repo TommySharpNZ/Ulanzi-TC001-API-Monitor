@@ -14,6 +14,7 @@
 #define BUTTON_3 14
 #define LED_PIN 32
 #define BUZZER 15
+#define LIGHT_SENSOR 35
 
 // Matrix configuration
 #define MATRIX_WIDTH 32
@@ -48,6 +49,12 @@ String displayPrefix = "";
 String displaySuffix = "";
 int pollingInterval = 60; // seconds
 bool scrollEnabled = true; // true = scroll, false = static display
+
+// Brightness configuration
+bool autoBrightness = false; // false = manual, true = auto (light sensor)
+int manualBrightness = 40; // 0-255, used when autoBrightness is false
+unsigned long lastBrightnessUpdate = 0;
+const int brightnessUpdateInterval = 100; // Update brightness every 100ms
 
 // Icon configuration
 String iconData = ""; // JSON array format: [[r,g,b],[r,g,b],...]
@@ -108,11 +115,12 @@ void setup() {
   pinMode(BUTTON_2, INPUT_PULLUP);
   pinMode(BUTTON_3, INPUT_PULLUP);
   pinMode(BUZZER, OUTPUT);
+  pinMode(LIGHT_SENSOR, INPUT); // Light sensor ADC input
   
   // Initialize LED matrix
   matrix.begin();
   matrix.setTextWrap(false);
-  matrix.setBrightness(40);
+  matrix.setBrightness(manualBrightness); // Will be updated after config load
   matrix.setTextColor(matrix.Color(255, 255, 255));
   
   // Show startup message
@@ -170,6 +178,13 @@ void setup() {
   
   displayScrollText("READY", matrix.Color(0, 255, 255));
   
+  // Poll API immediately if configured
+  if (apiConfigured) {
+    Serial.println("Performing initial API poll...");
+    pollAPI();
+    lastAPICall = millis();
+  }
+  
   // Reset scroll position
   scrollX = MATRIX_WIDTH;
 }
@@ -177,6 +192,12 @@ void setup() {
 void loop() {
   server.handleClient();
   checkButtons();
+  
+  // Update brightness if in auto mode
+  if (autoBrightness && (millis() - lastBrightnessUpdate > brightnessUpdateInterval)) {
+    updateBrightness();
+    lastBrightnessUpdate = millis();
+  }
   
   // Poll API if configured
   if (apiConfigured && (millis() - lastAPICall > (pollingInterval * 1000))) {
@@ -205,10 +226,19 @@ void loadConfiguration() {
   pollingInterval = preferences.getInt("interval", 60);
   scrollEnabled = preferences.getBool("scroll", true);
   iconData = preferences.getString("iconData", "");
+  autoBrightness = preferences.getBool("autoBright", false);
+  manualBrightness = preferences.getInt("brightness", 40);
   
   preferences.end();
   
   apiConfigured = (apiEndpoint.length() > 0 && jsonPath.length() > 0);
+  
+  // Apply brightness setting
+  if (autoBrightness) {
+    updateBrightness(); // Read sensor and set brightness
+  } else {
+    matrix.setBrightness(manualBrightness);
+  }
   
   // Parse icon data if present
   if (iconData.length() > 0) {
@@ -225,6 +255,7 @@ void loadConfiguration() {
     Serial.println("  Interval: " + String(pollingInterval) + "s");
     Serial.println("  Scroll: " + String(scrollEnabled ? "Enabled" : "Disabled"));
     Serial.println("  Icon: " + String(iconEnabled ? "Enabled" : "Disabled"));
+    Serial.println("  Brightness: " + String(autoBrightness ? "Auto" : "Manual (" + String(manualBrightness) + ")"));
   } else {
     Serial.println("No API configuration found");
   }
@@ -242,6 +273,8 @@ void saveConfiguration() {
   preferences.putInt("interval", pollingInterval);
   preferences.putBool("scroll", scrollEnabled);
   preferences.putString("iconData", iconData);
+  preferences.putBool("autoBright", autoBrightness);
+  preferences.putInt("brightness", manualBrightness);
   
   preferences.end();
   
@@ -672,6 +705,7 @@ void handleRoot() {
     html += "<p><strong>Polling Interval:</strong> " + String(pollingInterval) + " seconds</p>";
     html += "<p><strong>Display Mode:</strong> " + String(scrollEnabled ? "Scrolling" : "Static") + "</p>";
     html += "<p><strong>Icon:</strong> " + String(iconEnabled ? "Enabled" : "Disabled") + "</p>";
+    html += "<p><strong>Brightness:</strong> " + String(autoBrightness ? "Auto (Light Sensor)" : "Manual (" + String(manualBrightness) + ")") + "</p>";
   }
   html += "</div>";
   
@@ -789,6 +823,20 @@ void handleConfigPage() {
   html += "<p class='help'>How often to poll the API (5-3600 seconds)</p>";
   html += "</div>";
   
+  html += "<div class='form-group'>";
+  html += "<label>";
+  html += "<input type='checkbox' name='autoBright' id='autoBright' value='1' " + String(autoBrightness ? "checked" : "") + " onchange='toggleBrightnessMode()'> Auto Brightness (Light Sensor)";
+  html += "</label>";
+  html += "<p class='help'>Automatically adjust brightness based on ambient light</p>";
+  html += "</div>";
+  
+  html += "<div class='form-group' id='manualBrightnessGroup' style='display:" + String(autoBrightness ? "none" : "block") + "'>";
+  html += "<label>Manual Brightness:</label>";
+  html += "<input type='range' name='brightness' id='brightnessSlider' value='" + String(manualBrightness) + "' min='10' max='255' oninput='updateBrightnessLabel(this.value)'>";
+  html += "<span id='brightnessValue'>" + String(manualBrightness) + "</span>";
+  html += "<p class='help'>Set brightness level (10-255)</p>";
+  html += "</div>";
+  
   html += "<button type='submit' class='button'>Save Configuration</button>";
   html += "<button type='button' class='button secondary' onclick='testAPI()'>Test Connection</button>";
   html += "<a href='/' class='button secondary'>Cancel</a>";
@@ -800,6 +848,13 @@ void handleConfigPage() {
   html += "</div>";
   
   html += "<script>";
+  html += "function toggleBrightnessMode() {";
+  html += "  const isAuto = document.getElementById('autoBright').checked;";
+  html += "  document.getElementById('manualBrightnessGroup').style.display = isAuto ? 'none' : 'block';";
+  html += "}";
+  html += "function updateBrightnessLabel(value) {";
+  html += "  document.getElementById('brightnessValue').textContent = value;";
+  html += "}";
   html += "function testAPI() {";
   html += "  document.getElementById('testResult').innerHTML = '<p>Testing connection...</p>';";
   html += "  fetch('/test').then(r => r.text()).then(data => {";
@@ -855,9 +910,13 @@ void handleSaveConfig() {
   pollingInterval = server.arg("interval").toInt();
   scrollEnabled = server.hasArg("scroll"); // Checkbox: present = checked, absent = unchecked
   iconData = server.arg("iconData");
+  autoBrightness = server.hasArg("autoBright"); // Checkbox: present = checked, absent = unchecked
+  manualBrightness = server.arg("brightness").toInt();
   
   if (pollingInterval < 5) pollingInterval = 5;
   if (pollingInterval > 3600) pollingInterval = 3600;
+  if (manualBrightness < 10) manualBrightness = 10;
+  if (manualBrightness > 255) manualBrightness = 255;
   
   // Parse icon data if provided, otherwise clear icon
   if (iconData.length() > 0) {
@@ -868,8 +927,21 @@ void handleSaveConfig() {
   
   saveConfiguration();
   
+  // Update apiConfigured flag
+  apiConfigured = (apiEndpoint.length() > 0 && jsonPath.length() > 0);
+  
+  // Apply brightness setting immediately
+  if (autoBrightness) {
+    updateBrightness();
+  } else {
+    matrix.setBrightness(manualBrightness);
+  }
+  
   // Trigger immediate API poll and reset scroll
-  lastAPICall = 0;
+  if (apiConfigured) {
+    pollAPI();
+    lastAPICall = millis();
+  }
   scrollX = MATRIX_WIDTH;
   
   String html = "<!DOCTYPE html><html><head>";
@@ -974,4 +1046,42 @@ void displayScrollText(const char* text, uint16_t color) {
     matrix.show();
     delay(50);
   }
+}
+
+void updateBrightness() {
+  // Read light sensor value (0-4095 for ESP32 12-bit ADC)
+  int sensorValue = analogRead(LIGHT_SENSOR);
+  
+  // Debug: uncomment to see sensor readings
+  // Serial.print("Light sensor: ");
+  // Serial.println(sensorValue);
+  
+  // Map sensor reading to brightness range with lower minimum for dark rooms
+  // Typical sensor ranges:
+  // - Very dark (covered/night): 0-100
+  // - Dim room: 100-500
+  // - Normal indoor: 500-1500
+  // - Bright indoor/window: 1500-3000
+  // - Direct sunlight: 3000-4095
+  
+  int brightness;
+  if (sensorValue < 1000) {
+    // Very dark - use very low brightness (1-5)
+    brightness = map(sensorValue, 0, 1000, 1, 5);
+  } else if (sensorValue < 2000) {
+    // Dim room - low to medium brightness (5-30)
+    brightness = map(sensorValue, 1000, 2000, 5, 30);
+  } else if (sensorValue < 3000) {
+    // Normal indoor - medium to high brightness (30-120)
+    brightness = map(sensorValue, 2000, 3000, 30, 120);
+  } else {
+    // Bright light - high brightness (120-255)
+    brightness = map(sensorValue, 3000, 4095, 120, 255);
+  }
+  
+  // Constrain to valid range
+  brightness = constrain(brightness, 1, 255);
+  // Serial.print("Setting brightness: ");
+  // Serial.println(brightness);
+  matrix.setBrightness(brightness);
 }

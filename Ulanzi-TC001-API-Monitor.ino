@@ -15,12 +15,20 @@
 #define LED_PIN 32
 #define BUZZER 15
 #define LIGHT_SENSOR 35
+#define BATTERY_ADC 34  // Battery voltage monitoring
 
 // Matrix configuration
 #define MATRIX_WIDTH 32
 #define MATRIX_HEIGHT 8
 #define ICON_WIDTH 8
 #define TEXT_WIDTH 24
+
+// Battery configuration
+#define BATTERY_MIN_VOLTAGE 3.0  // Minimum battery voltage (empty)
+#define BATTERY_MAX_VOLTAGE 4.2  // Maximum battery voltage (full)
+#define BATTERY_SAMPLES 10       // Number of samples to average
+#define BATTERY_LOW_THRESHOLD 20 // Low battery warning at 20%
+#define BATTERY_CRITICAL_THRESHOLD 10 // Critical battery at 10%
 
 // Create matrix object
 Adafruit_NeoMatrix matrix = Adafruit_NeoMatrix(
@@ -56,6 +64,15 @@ int manualBrightness = 40; // 0-255, used when autoBrightness is false
 unsigned long lastBrightnessUpdate = 0;
 const int brightnessUpdateInterval = 100; // Update brightness every 100ms
 
+// Battery monitoring
+float batteryVoltage = 0.0;
+int batteryPercentage = 0;
+unsigned long lastBatteryUpdate = 0;
+const unsigned long batteryUpdateInterval = 5000; // Update battery every 5 seconds
+bool showBatteryRequested = false;
+unsigned long batteryDisplayTime = 0;
+const unsigned long batteryDisplayDuration = 3000; // Show battery for 3 seconds
+
 // Icon configuration
 String iconData = ""; // JSON array format: [[r,g,b],[r,g,b],...]
 bool iconEnabled = false;
@@ -69,7 +86,10 @@ bool apiConfigured = false;
 
 // Button states
 bool button1Pressed = false;
+bool button2Pressed = false;
+bool button3Pressed = false;
 unsigned long buttonPressTime = 0;
+unsigned long button23PressTime = 0; // For Button 2 + 3 combination
 
 // Scrolling text variables
 int16_t scrollX = MATRIX_WIDTH;
@@ -97,6 +117,7 @@ void displayUpdateTask(void * parameter) {
 void setup() {
   Serial.begin(115200);
   Serial.println("\n\nTC001 Custom Firmware Starting...");
+  Serial.println("Version: 1.1.0 - Battery Monitoring Edition");
   
   // Get MAC address and create unique device ID
   uint8_t mac[6];
@@ -116,6 +137,7 @@ void setup() {
   pinMode(BUTTON_3, INPUT_PULLUP);
   pinMode(BUZZER, OUTPUT);
   pinMode(LIGHT_SENSOR, INPUT); // Light sensor ADC input
+  pinMode(BATTERY_ADC, INPUT);  // Battery ADC input
   
   // Initialize LED matrix
   matrix.begin();
@@ -125,6 +147,14 @@ void setup() {
   
   // Show startup message
   displayScrollText(deviceName.c_str(), matrix.Color(0, 255, 0));
+  
+  // Initial battery reading
+  updateBatteryStatus();
+  Serial.print("Initial Battery: ");
+  Serial.print(batteryVoltage);
+  Serial.print("V (");
+  Serial.print(batteryPercentage);
+  Serial.println("%)");
   
   // Load saved configuration
   loadConfiguration();
@@ -199,20 +229,169 @@ void loop() {
     lastBrightnessUpdate = millis();
   }
   
+  // Update battery status periodically
+  if (millis() - lastBatteryUpdate > batteryUpdateInterval) {
+    updateBatteryStatus();
+    lastBatteryUpdate = millis();
+  }
+  
+  // Check if battery display time has elapsed
+  if (showBatteryRequested && (millis() - batteryDisplayTime > batteryDisplayDuration)) {
+    showBatteryRequested = false;
+    scrollX = MATRIX_WIDTH; // Reset scroll for normal display
+  }
+  
   // Poll API if configured
   if (apiConfigured && (millis() - lastAPICall > (pollingInterval * 1000))) {
     pollAPI();
     lastAPICall = millis();
   }
   
-  // Continuously scroll the current value
+  // Continuously scroll the current value or battery info
   if (millis() - lastScrollUpdate > scrollDelay) {
-    scrollCurrentValue();
+    if (showBatteryRequested) {
+      scrollBatteryDisplay();
+    } else {
+      scrollCurrentValue();
+    }
     lastScrollUpdate = millis();
   }
   
   delay(10);
 }
+
+// ============================================
+// Battery Monitoring Functions
+// ============================================
+
+void updateBatteryStatus() {
+  // Take multiple samples and average them for more stable readings
+  long sum = 0;
+  for (int i = 0; i < BATTERY_SAMPLES; i++) {
+    sum += analogRead(BATTERY_ADC);
+    delay(5);
+  }
+  int rawValue = sum / BATTERY_SAMPLES;
+  
+  // Convert ADC reading to voltage
+  // ESP32 ADC is 12-bit (0-4095) with 3.3V reference
+  // Adjust the multiplier based on your voltage divider ratio
+  // Common TC001 voltage divider is 2:1, so multiply by 2
+  // You may need to calibrate this value for your specific hardware
+  batteryVoltage = (rawValue / 4095.0) * 3.3 * 2.0;
+  
+  // Apply calibration offset if needed (measure actual voltage and adjust)
+  // batteryVoltage += 0.1; // Example: add 0.1V if readings are consistently low
+  
+  // Calculate percentage using voltage curve
+  batteryPercentage = calculateBatteryPercentage(batteryVoltage);
+  
+  // Debug output
+  Serial.print("Battery: ");
+  Serial.print(batteryVoltage, 2);
+  Serial.print("V (");
+  Serial.print(batteryPercentage);
+  Serial.print("%) - Raw ADC: ");
+  Serial.println(rawValue);
+  
+  // Check for low battery warning
+  if (batteryPercentage <= BATTERY_CRITICAL_THRESHOLD && batteryPercentage > 0) {
+    // Critical battery - beep twice
+    tone(BUZZER, 2000, 100);
+    delay(150);
+    tone(BUZZER, 2000, 100);
+  } else if (batteryPercentage <= BATTERY_LOW_THRESHOLD && batteryPercentage > 0) {
+    // Low battery - single beep (only once per boot)
+    static bool lowBatteryWarned = false;
+    if (!lowBatteryWarned) {
+      tone(BUZZER, 1500, 200);
+      lowBatteryWarned = true;
+    }
+  }
+}
+
+int calculateBatteryPercentage(float voltage) {
+  // LiPo voltage curve (approximate)
+  // 4.2V = 100%, 3.7V = 50%, 3.0V = 0%
+  
+  if (voltage >= BATTERY_MAX_VOLTAGE) {
+    return 100;
+  } else if (voltage <= BATTERY_MIN_VOLTAGE) {
+    return 0;
+  }
+  
+  // Non-linear mapping for more accurate LiPo curve
+  // LiPo batteries have a relatively flat discharge curve from 100% to 20%,
+  // then drop quickly from 20% to 0%
+  
+  if (voltage > 3.9) {
+    // 100% to 75% range (4.2V to 3.9V)
+    return map(voltage * 100, 390, 420, 75, 100);
+  } else if (voltage > 3.7) {
+    // 75% to 40% range (3.9V to 3.7V)
+    return map(voltage * 100, 370, 390, 40, 75);
+  } else if (voltage > 3.5) {
+    // 40% to 15% range (3.7V to 3.5V)
+    return map(voltage * 100, 350, 370, 15, 40);
+  } else {
+    // 15% to 0% range (3.5V to 3.0V)
+    return map(voltage * 100, 300, 350, 0, 15);
+  }
+}
+
+void scrollBatteryDisplay() {
+  String batteryText = "BAT: " + String(batteryPercentage) + "% ";
+  batteryText += String(batteryVoltage, 2) + "V";
+  
+  // Choose color based on battery level
+  uint16_t color;
+  if (batteryPercentage <= BATTERY_CRITICAL_THRESHOLD) {
+    color = matrix.Color(255, 0, 0); // Red for critical
+  } else if (batteryPercentage <= BATTERY_LOW_THRESHOLD) {
+    color = matrix.Color(255, 165, 0); // Orange for low
+  } else {
+    color = matrix.Color(0, 255, 0); // Green for good
+  }
+  
+  matrix.fillScreen(0);
+  matrix.setTextColor(color);
+  
+  if (scrollEnabled) {
+    // Scrolling mode
+    int16_t textWidth = batteryText.length() * 6;
+    
+    matrix.setCursor(scrollX, 0);
+    matrix.print(batteryText);
+    matrix.show();
+    
+    scrollX--;
+    if (scrollX < -textWidth) {
+      scrollX = MATRIX_WIDTH;
+    }
+  } else {
+    // Static mode - center the text
+    int16_t x1, y1;
+    uint16_t w, h;
+    matrix.getTextBounds(batteryText.c_str(), 0, 0, &x1, &y1, &w, &h);
+    int16_t centerX = (MATRIX_WIDTH - w) / 2;
+    
+    matrix.setCursor(centerX, 0);
+    matrix.print(batteryText);
+    matrix.show();
+  }
+}
+
+void showBatteryOnDisplay() {
+  showBatteryRequested = true;
+  batteryDisplayTime = millis();
+  scrollX = MATRIX_WIDTH; // Reset scroll position
+  updateBatteryStatus(); // Get latest reading
+  Serial.println("Battery display requested via button press");
+}
+
+// ============================================
+// Original Functions (with battery integration)
+// ============================================
 
 void loadConfiguration() {
   preferences.begin("tc001", false);
@@ -253,11 +432,14 @@ void loadConfiguration() {
     Serial.println("  Prefix: " + displayPrefix);
     Serial.println("  Suffix: " + displaySuffix);
     Serial.println("  Interval: " + String(pollingInterval) + "s");
-    Serial.println("  Scroll: " + String(scrollEnabled ? "Enabled" : "Disabled"));
+    Serial.println("  Scroll: " + String(scrollEnabled ? "Yes" : "No"));
+    Serial.println("  Auto Brightness: " + String(autoBrightness ? "Yes" : "No"));
+    if (!autoBrightness) {
+      Serial.println("  Manual Brightness: " + String(manualBrightness));
+    }
     Serial.println("  Icon: " + String(iconEnabled ? "Enabled" : "Disabled"));
-    Serial.println("  Brightness: " + String(autoBrightness ? "Auto" : "Manual (" + String(manualBrightness) + ")"));
   } else {
-    Serial.println("No API configuration found");
+    Serial.println("API not configured yet");
   }
 }
 
@@ -278,382 +460,379 @@ void saveConfiguration() {
   
   preferences.end();
   
-  apiConfigured = (apiEndpoint.length() > 0 && jsonPath.length() > 0);
   Serial.println("Configuration saved");
 }
 
-void parseIconData(String data) {
-  if (data.length() == 0) {
-    iconEnabled = false;
-    return;
-  }
-  
-  // Parse JSON array: [[r,g,b],[r,g,b],...]
-  JsonDocument doc;
-  DeserializationError error = deserializeJson(doc, data);
-  
-  if (error) {
-    Serial.print("Icon JSON parsing failed: ");
-    Serial.println(error.c_str());
-    iconEnabled = false;
-    return;
-  }
-  
-  JsonArray array = doc.as<JsonArray>();
-  int pixelCount = 0;
-  
-  for (JsonArray pixel : array) {
-    if (pixelCount >= 64) break; // 8x8 = 64 pixels
-    
-    if (pixel.size() >= 3) {
-      uint8_t r = pixel[0];
-      uint8_t g = pixel[1];
-      uint8_t b = pixel[2];
-      iconPixels[pixelCount] = matrix.Color(r, g, b);
-      pixelCount++;
-    }
-  }
-  
-  iconEnabled = (pixelCount == 64);
-  
-  if (iconEnabled) {
-    Serial.println("Icon parsed successfully: 64 pixels");
-  } else {
-    Serial.printf("Icon parsing incomplete: %d pixels (need 64)\n", pixelCount);
-  }
-}
-
-void pollAPI() {
-  if (!apiConfigured) return;
-  
-  Serial.println("Polling API: " + apiEndpoint);
-  
-  HTTPClient http;
-  http.begin(apiEndpoint);
-  
-  // Add API key header if configured
-  if (apiKey.length() > 0) {
-    http.addHeader(apiHeaderName, apiKey);
-  }
-  
-  int httpCode = http.GET();
-  
-  if (httpCode > 0) {
-    Serial.printf("HTTP Response: %d\n", httpCode);
-    
-    if (httpCode == HTTP_CODE_OK) {
-      String payload = http.getString();
-      Serial.println("Response: " + payload);
-      
-      // Parse JSON and extract value
-      String extractedValue = extractJSONValue(payload, jsonPath);
-      
-      if (extractedValue.length() > 0) {
-        currentValue = extractedValue;
-        lastError = "";
-        Serial.println("Extracted value: " + currentValue);
-      } else {
-        lastError = "JSON path not found";
-        Serial.println("Error: " + lastError);
-      }
-    } else {
-      lastError = "HTTP " + String(httpCode);
-      Serial.println("Error: " + lastError);
-    }
-  } else {
-    lastError = "Connection failed";
-    Serial.printf("Error: %s\n", http.errorToString(httpCode).c_str());
-  }
-  
-  http.end();
-}
-
-String extractJSONValue(String json, String path) {
-  // Parse JSON
-  JsonDocument doc;
-  DeserializationError error = deserializeJson(doc, json);
-  
-  if (error) {
-    Serial.print("JSON parsing failed: ");
-    Serial.println(error.c_str());
-    return "";
-  }
-  
-  // Navigate the JSON path
-  // Format: "key1.key2[0].key3" or "key1[Username=Binai Prasad].key3"
-  JsonVariant value = doc.as<JsonVariant>();
-  
-  int start = 0;
-  int end = 0;
-  
-  while (end < path.length()) {
-    // Find next separator
-    end = path.indexOf('.', start);
-    if (end == -1) end = path.length();
-    
-    String segment = path.substring(start, end);
-    
-    // Check if segment has array index or filter
-    int bracketStart = segment.indexOf('[');
-    if (bracketStart != -1) {
-      int bracketEnd = segment.indexOf(']');
-      String key = segment.substring(0, bracketStart);
-      String bracketContent = segment.substring(bracketStart + 1, bracketEnd);
-      
-      // Check if it's a filter (contains '=') or just an index
-      int equalsPos = bracketContent.indexOf('=');
-      
-      if (equalsPos != -1) {
-        // Array filter: key[fieldName=value]
-        String filterField = bracketContent.substring(0, equalsPos);
-        String filterValue = bracketContent.substring(equalsPos + 1);
-        
-        // Navigate to the array
-        if (key.length() > 0) {
-          value = value[key];
-        }
-        
-        // Search through array for matching item
-        if (value.is<JsonArray>()) {
-          JsonArray arr = value.as<JsonArray>();
-          bool found = false;
-          
-          for (JsonVariant item : arr) {
-            if (item[filterField].as<String>() == filterValue) {
-              value = item;
-              found = true;
-              break;
-            }
-          }
-          
-          if (!found) {
-            Serial.println("No matching item found for filter: " + filterField + "=" + filterValue);
-            return "";
-          }
-        } else {
-          Serial.println("Expected array for filtering but got different type");
-          return "";
-        }
-      } else {
-        // Regular array index: key[0]
-        int index = bracketContent.toInt();
-        
-        if (key.length() > 0) {
-          value = value[key][index];
-        } else {
-          value = value[index];
-        }
-      }
-    } else {
-      value = value[segment];
-    }
-    
-    if (value.isNull()) {
-      Serial.println("Path segment not found: " + segment);
-      return "";
-    }
-    
-    start = end + 1;
-  }
-  
-  // Convert value to string
-  if (value.is<int>()) {
-    return String(value.as<int>());
-  } else if (value.is<float>()) {
-    return String(value.as<float>());
-  } else if (value.is<const char*>()) {
-    return String(value.as<const char*>());
-  } else if (value.is<bool>()) {
-    return value.as<bool>() ? "true" : "false";
-  }
-  
-  return "";
-}
-
-void scrollCurrentValue() {
-  matrix.fillScreen(0);
-  
-  String displayText;
-  uint16_t color;
-  
-  // Check if in config mode first
-  if (inConfigMode) {
-    displayText = configModeMessage;
-    color = matrix.Color(255, 255, 0); // Yellow for config mode
-  } else if (lastError.length() > 0) {
-    displayText = lastError;
-    color = matrix.Color(255, 0, 0); // Red for errors
-  } else if (!apiConfigured) {
-    displayText = "NOT CONFIGURED";
-    color = matrix.Color(255, 255, 0); // Yellow for not configured
-  } else {
-    displayText = displayPrefix + currentValue + displaySuffix;
-    color = matrix.Color(0, 255, 0); // Green for normal
-  }
-  
-  if (scrollEnabled) {
-    // Scrolling mode
-    // Draw icon at scroll position if enabled
-    if (iconEnabled && !inConfigMode) {
-      // Draw icon at current scroll position
-      for (int y = 0; y < 8; y++) {
-        for (int x = 0; x < 8; x++) {
-          int pixelIndex = y * 8 + x;
-          int drawX = scrollX + x;
-          // Only draw if within visible area
-          if (drawX >= 0 && drawX < MATRIX_WIDTH) {
-            matrix.drawPixel(drawX, y, iconPixels[pixelIndex]);
-          }
-        }
-      }
-    }
-    
-    // Calculate text start position (after icon if enabled, with 1 pixel gap)
-    int textStartX = iconEnabled ? (scrollX + ICON_WIDTH + 1) : scrollX;
-    
-    matrix.setTextColor(color);
-    matrix.setCursor(textStartX, 0);  // y=0 for proper text rendering with descenders
-    matrix.print(displayText);
-    matrix.show();
-    
-    scrollX--;
-    
-    // Calculate total width: icon + gap + text (default font is 6 pixels per character)
-    int16_t textWidth = displayText.length() * 6;
-    int16_t totalWidth = iconEnabled ? (ICON_WIDTH + 1 + textWidth) : textWidth;
-    
-    // Reset scroll when content has fully passed
-    if (scrollX < -totalWidth) {
-      scrollX = MATRIX_WIDTH;
-    }
-  } else {
-    // Static mode - center the content
-    int16_t textWidth = displayText.length() * 6;
-    int16_t totalWidth = iconEnabled ? (ICON_WIDTH + 1 + textWidth) : textWidth;
-    
-    // Center the content
-    int startX = (MATRIX_WIDTH - totalWidth) / 2;
-    if (startX < 0) startX = 0; // If too wide, left-align
-    
-    // Draw icon if enabled
-    if (iconEnabled && !inConfigMode) {
-      for (int y = 0; y < 8; y++) {
-        for (int x = 0; x < 8; x++) {
-          int pixelIndex = y * 8 + x;
-          int drawX = startX + x;
-          if (drawX >= 0 && drawX < MATRIX_WIDTH) {
-            matrix.drawPixel(drawX, y, iconPixels[pixelIndex]);
-          }
-        }
-      }
-    }
-    
-    // Draw text
-    int textStartX = iconEnabled ? (startX + ICON_WIDTH + 1) : startX;
-    matrix.setTextColor(color);
-    matrix.setCursor(textStartX, 0);
-    matrix.print(displayText);
-    matrix.show();
-  }
-}
-
-void checkConfigMode() {
-  if (digitalRead(BUTTON_1) == LOW) {
-    Serial.println("Button 1 held - entering config mode");
-    displayScrollText("CONFIG MODE", matrix.Color(255, 255, 0));
-    delay(1000);
-    
-    WiFiManager wifiManager;
-    wifiManager.resetSettings();
-    wifiManager.setAPCallback(configModeCallback);
-    
-    String apName = "TC001-" + deviceID;
-    wifiManager.startConfigPortal(apName.c_str());
-    
-    // If portal exits, stop the display task
-    if (displayTaskHandle != NULL) {
-      vTaskDelete(displayTaskHandle);
-      displayTaskHandle = NULL;
-    }
-    inConfigMode = false;
-  }
-}
-
 void checkButtons() {
-  if (digitalRead(BUTTON_1) == LOW && digitalRead(BUTTON_2) == LOW && digitalRead(BUTTON_3) == LOW) {
+  // Read all button states
+  bool btn1 = (digitalRead(BUTTON_1) == LOW);
+  bool btn2 = (digitalRead(BUTTON_2) == LOW);
+  bool btn3 = (digitalRead(BUTTON_3) == LOW);
+  
+  // Check for Button 2 + Button 3 combination to show battery
+  if (btn2 && btn3) {
+    if (!button2Pressed || !button3Pressed) {
+      // Just pressed
+      button23PressTime = millis();
+      button2Pressed = true;
+      button3Pressed = true;
+    } else if (millis() - button23PressTime > 500) {
+      // Held for 500ms - show battery
+      showBatteryOnDisplay();
+      // Wait for release
+      while (digitalRead(BUTTON_2) == LOW || digitalRead(BUTTON_3) == LOW) {
+        delay(50);
+      }
+      button2Pressed = false;
+      button3Pressed = false;
+    }
+    return; // Don't check other button combinations
+  } else {
+    button2Pressed = false;
+    button3Pressed = false;
+  }
+  
+  // Check for factory reset (all 3 buttons)
+  if (btn1 && btn2 && btn3) {
     if (!button1Pressed) {
       buttonPressTime = millis();
       button1Pressed = true;
-      Serial.println("All 3 buttons pressed - hold for 3 seconds to factory reset");
     }
     
     if (millis() - buttonPressTime > 3000) {
-      Serial.println("Factory reset triggered!");
-      displayScrollText("FACTORY RESET", matrix.Color(255, 0, 0));
-      
-      tone(BUZZER, 1000, 200);
-      delay(300);
-      tone(BUZZER, 1000, 200);
-      
-      delay(1000);
-      
-      // Clear all preferences
-      preferences.begin("tc001", false);
-      preferences.clear();
-      preferences.end();
-      
-      WiFiManager wifiManager;
-      wifiManager.resetSettings();
-      ESP.restart();
+      performFactoryReset();
+      button1Pressed = false;
     }
   } else {
     button1Pressed = false;
   }
 }
 
-void configModeCallback(WiFiManager *myWiFiManager) {
-  Serial.println("Entered config mode");
-  Serial.println(WiFi.softAPIP());
+void performFactoryReset() {
+  Serial.println("Factory reset initiated!");
   
-  String apName = "TC001-" + deviceID;
-  inConfigMode = true;
-  configModeMessage = "CONNECT TO: " + apName;
+  // Beep twice to confirm
+  tone(BUZZER, 2000, 200);
+  delay(300);
+  tone(BUZZER, 2000, 200);
+  delay(300);
   
-  // Reset scroll position for continuous scrolling
-  scrollX = MATRIX_WIDTH;
+  displayScrollText("FACTORY RESET", matrix.Color(255, 0, 0));
   
-  // Create FreeRTOS task for display updates while in config portal
-  if (displayTaskHandle == NULL) {
-    xTaskCreate(
-      displayUpdateTask,      // Task function
-      "DisplayTask",          // Task name
-      4096,                   // Stack size
-      NULL,                   // Parameters
-      1,                      // Priority
-      &displayTaskHandle      // Task handle
-    );
-    Serial.println("Display update task created");
+  preferences.begin("tc001", false);
+  preferences.clear();
+  preferences.end();
+  
+  WiFiManager wifiManager;
+  wifiManager.resetSettings();
+  
+  delay(1000);
+  ESP.restart();
+}
+
+void checkConfigMode() {
+  if (digitalRead(BUTTON_1) == LOW) {
+    Serial.println("Button 1 held - entering config mode");
+    WiFiManager wifiManager;
+    wifiManager.resetSettings();
+    delay(500);
   }
 }
 
+void configModeCallback(WiFiManager *myWiFiManager) {
+  Serial.println("Entered config mode");
+  inConfigMode = true;
+  configModeMessage = "CONFIG: " + String(myWiFiManager->getConfigPortalSSID());
+  
+  // Create task for continuous display updates
+  xTaskCreatePinnedToCore(
+    displayUpdateTask,
+    "DisplayTask",
+    4096,
+    NULL,
+    1,
+    &displayTaskHandle,
+    0
+  );
+  
+  Serial.println("Display update task created");
+  currentValue = configModeMessage;
+  scrollX = MATRIX_WIDTH;
+}
+
+void pollAPI() {
+  if (!apiConfigured) {
+    return;
+  }
+  
+  HTTPClient http;
+  http.begin(apiEndpoint);
+  
+  if (apiKey.length() > 0) {
+    http.addHeader(apiHeaderName, apiKey);
+  }
+  
+  Serial.println("Polling API: " + apiEndpoint);
+  int httpCode = http.GET();
+  
+  if (httpCode > 0) {
+    if (httpCode == HTTP_CODE_OK) {
+      String payload = http.getString();
+      Serial.println("API Response received (" + String(payload.length()) + " bytes)");
+      
+      String value = extractJSONValue(payload, jsonPath);
+      
+      if (value.length() > 0) {
+        currentValue = displayPrefix + value + displaySuffix;
+        lastError = "";
+        Serial.println("Extracted value: " + value);
+        Serial.println("Display value: " + currentValue);
+        scrollX = MATRIX_WIDTH;
+      } else {
+        currentValue = "PATH ERROR";
+        lastError = "Could not extract value from JSON path";
+        Serial.println("Error: " + lastError);
+      }
+    } else {
+      currentValue = "HTTP " + String(httpCode);
+      lastError = "HTTP error: " + String(httpCode);
+      Serial.println("HTTP error: " + String(httpCode));
+    }
+  } else {
+    currentValue = "CONN FAIL";
+    lastError = http.errorToString(httpCode);
+    Serial.println("Connection failed: " + lastError);
+  }
+  
+  http.end();
+}
+
+String extractJSONValue(const String& json, const String& path) {
+  DynamicJsonDocument doc(4096);
+  DeserializationError error = deserializeJson(doc, json);
+  
+  if (error) {
+    Serial.print("JSON parse error: ");
+    Serial.println(error.c_str());
+    return "";
+  }
+  
+  JsonVariant current = doc.as<JsonVariant>();
+  String workingPath = path;
+  
+  while (workingPath.length() > 0) {
+    int dotPos = workingPath.indexOf('.');
+    int bracketPos = workingPath.indexOf('[');
+    
+    String segment;
+    if (bracketPos >= 0 && (dotPos < 0 || bracketPos < dotPos)) {
+      segment = workingPath.substring(0, bracketPos);
+      if (segment.length() > 0 && current.is<JsonObject>()) {
+        current = current[segment];
+      }
+      
+      int closeBracket = workingPath.indexOf(']');
+      if (closeBracket < 0) {
+        Serial.println("Malformed path: missing ]");
+        return "";
+      }
+      
+      String arrayPart = workingPath.substring(bracketPos + 1, closeBracket);
+      
+      if (arrayPart.indexOf('=') > 0) {
+        int eqPos = arrayPart.indexOf('=');
+        String filterField = arrayPart.substring(0, eqPos);
+        String filterValue = arrayPart.substring(eqPos + 1);
+        
+        if (current.is<JsonArray>()) {
+          JsonArray arr = current.as<JsonArray>();
+          bool found = false;
+          
+          for (JsonVariant item : arr) {
+            if (item.is<JsonObject>()) {
+              JsonVariant fieldValue = item[filterField];
+              if (fieldValue.is<const char*>()) {
+                if (String(fieldValue.as<const char*>()) == filterValue) {
+                  current = item;
+                  found = true;
+                  break;
+                }
+              } else if (fieldValue.is<int>()) {
+                if (String(fieldValue.as<int>()) == filterValue) {
+                  current = item;
+                  found = true;
+                  break;
+                }
+              }
+            }
+          }
+          
+          if (!found) {
+            Serial.println("No matching item found in array");
+            return "";
+          }
+        }
+      } else {
+        int index = arrayPart.toInt();
+        if (current.is<JsonArray>()) {
+          JsonArray arr = current.as<JsonArray>();
+          if (index >= 0 && index < arr.size()) {
+            current = arr[index];
+          } else {
+            Serial.println("Array index out of bounds");
+            return "";
+          }
+        }
+      }
+      
+      workingPath = workingPath.substring(closeBracket + 1);
+      if (workingPath.startsWith(".")) {
+        workingPath = workingPath.substring(1);
+      }
+    } else if (dotPos >= 0) {
+      segment = workingPath.substring(0, dotPos);
+      workingPath = workingPath.substring(dotPos + 1);
+      
+      if (current.is<JsonObject>()) {
+        current = current[segment];
+      } else {
+        Serial.println("Expected object at segment: " + segment);
+        return "";
+      }
+    } else {
+      segment = workingPath;
+      workingPath = "";
+      
+      if (current.is<JsonObject>()) {
+        current = current[segment];
+      }
+    }
+  }
+  
+  if (current.is<const char*>()) {
+    return String(current.as<const char*>());
+  } else if (current.is<int>()) {
+    return String(current.as<int>());
+  } else if (current.is<float>()) {
+    return String(current.as<float>(), 2);
+  } else if (current.is<bool>()) {
+    return current.as<bool>() ? "true" : "false";
+  }
+  
+  Serial.println("Value is not a primitive type");
+  return "";
+}
+
+void scrollCurrentValue() {
+  matrix.fillScreen(0);
+  
+  uint16_t color;
+  if (lastError.length() > 0) {
+    color = matrix.Color(255, 0, 0);
+  } else {
+    color = matrix.Color(0, 255, 0);
+  }
+  matrix.setTextColor(color);
+  
+  if (scrollEnabled) {
+    int iconOffset = iconEnabled ? (ICON_WIDTH + 1) : 0;
+    int16_t textWidth = currentValue.length() * 6;
+    
+    if (iconEnabled && scrollX < ICON_WIDTH) {
+      for (int y = 0; y < 8; y++) {
+        for (int x = 0; x < ICON_WIDTH; x++) {
+          if (scrollX + x >= 0 && scrollX + x < MATRIX_WIDTH) {
+            matrix.drawPixel(scrollX + x, y, iconPixels[y * 8 + x]);
+          }
+        }
+      }
+    }
+    
+    matrix.setCursor(scrollX + iconOffset, 0);
+    matrix.print(currentValue);
+    matrix.show();
+    
+    scrollX--;
+    if (scrollX < -(textWidth + iconOffset)) {
+      scrollX = MATRIX_WIDTH;
+    }
+  } else {
+    int displayWidth = iconEnabled ? TEXT_WIDTH : MATRIX_WIDTH;
+    int xOffset = iconEnabled ? ICON_WIDTH : 0;
+    
+    if (iconEnabled) {
+      for (int y = 0; y < 8; y++) {
+        for (int x = 0; x < 8; x++) {
+          matrix.drawPixel(x, y, iconPixels[y * 8 + x]);
+        }
+      }
+    }
+    
+    int16_t x1, y1;
+    uint16_t w, h;
+    matrix.getTextBounds(currentValue.c_str(), 0, 0, &x1, &y1, &w, &h);
+    
+    int16_t centerX = xOffset + (displayWidth - w) / 2;
+    if (centerX < xOffset) centerX = xOffset;
+    
+    matrix.setCursor(centerX, 0);
+    matrix.print(currentValue);
+    matrix.show();
+  }
+}
+
+void parseIconData(const String& jsonData) {
+  DynamicJsonDocument doc(2048);
+  DeserializationError error = deserializeJson(doc, jsonData);
+  
+  if (error) {
+    Serial.print("Icon parse error: ");
+    Serial.println(error.c_str());
+    iconEnabled = false;
+    return;
+  }
+  
+  if (!doc.is<JsonArray>()) {
+    Serial.println("Icon data is not an array");
+    iconEnabled = false;
+    return;
+  }
+  
+  JsonArray pixels = doc.as<JsonArray>();
+  if (pixels.size() != 64) {
+    Serial.print("Icon must have 64 pixels, got: ");
+    Serial.println(pixels.size());
+    iconEnabled = false;
+    return;
+  }
+  
+  for (int i = 0; i < 64; i++) {
+    JsonArray pixel = pixels[i];
+    if (!pixel || pixel.size() < 3) {
+      Serial.print("Invalid pixel at index: ");
+      Serial.println(i);
+      iconEnabled = false;
+      return;
+    }
+    
+    uint8_t r = pixel[0];
+    uint8_t g = pixel[1];
+    uint8_t b = pixel[2];
+    
+    iconPixels[i] = matrix.Color(r, g, b);
+  }
+  
+  iconEnabled = true;
+  Serial.println("Icon parsed successfully (64 pixels)");
+}
+
 void setupWebServer() {
-  // Root page
-  server.on("/", HTTP_GET, handleRoot);
-  
-  // Configuration page
-  server.on("/config", HTTP_GET, handleConfigPage);
-  
-  // Save configuration
+  server.on("/", handleRoot);
+  server.on("/config", handleConfigPage);
   server.on("/save", HTTP_POST, handleSaveConfig);
-  
-  // Test API connection
-  server.on("/test", HTTP_GET, handleTestAPI);
-  
-  // Factory reset endpoint
-  server.on("/reset", HTTP_GET, handleFactoryReset);
-  
-  // Status endpoint (JSON)
-  server.on("/status", HTTP_GET, handleStatus);
+  server.on("/test", handleTestAPI);
+  server.on("/reset", handleFactoryReset);
+  server.on("/status", handleStatus);
 }
 
 void handleRoot() {
@@ -663,69 +842,113 @@ void handleRoot() {
   html += "body { font-family: Arial, sans-serif; margin: 20px; background: #f0f0f0; }";
   html += ".container { max-width: 600px; margin: 0 auto; background: white; padding: 20px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }";
   html += "h1 { color: #333; border-bottom: 2px solid #4CAF50; padding-bottom: 10px; }";
-  html += ".info { background: #e8f5e9; padding: 15px; border-radius: 5px; margin: 10px 0; }";
+  html += "h2 { color: #555; margin-top: 20px; }";
+  html += ".info-row { display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #eee; }";
   html += ".label { font-weight: bold; color: #666; }";
-  html += ".value { color: #2196F3; font-size: 1.2em; }";
-  html += ".button { background: #4CAF50; color: white; padding: 12px 24px; border: none; border-radius: 5px; cursor: pointer; font-size: 1em; margin: 10px 5px; text-decoration: none; display: inline-block; }";
+  html += ".value { color: #333; }";
+  html += ".button { display: inline-block; background: #4CAF50; color: white; padding: 10px 20px; ";
+  html += "text-decoration: none; border-radius: 5px; margin: 5px; border: none; cursor: pointer; }";
   html += ".button:hover { background: #45a049; }";
+  html += ".button.secondary { background: #008CBA; }";
   html += ".button.danger { background: #f44336; }";
-  html += ".button.danger:hover { background: #d32f2f; }";
   html += ".status { padding: 15px; border-radius: 5px; margin: 10px 0; }";
-  html += ".status.ok { background: #e8f5e9; color: #2e7d32; }";
-  html += ".status.error { background: #ffebee; color: #c62828; }";
-  html += ".status.warning { background: #fff8e1; color: #f57f17; }";
+  html += ".status.ok { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }";
+  html += ".status.error { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }";
+  html += ".status.warning { background: #fff3cd; color: #856404; border: 1px solid #ffeaa7; }";
+  
+  // Battery status styles
+  html += ".battery-container { display: flex; align-items: center; gap: 10px; margin: 15px 0; }";
+  html += ".battery-bar { width: 200px; height: 30px; border: 2px solid #333; border-radius: 5px; position: relative; overflow: hidden; }";
+  html += ".battery-fill { height: 100%; transition: width 0.3s ease; }";
+  html += ".battery-fill.good { background: #4CAF50; }";
+  html += ".battery-fill.low { background: #FFA726; }";
+  html += ".battery-fill.critical { background: #f44336; }";
+  html += ".battery-text { position: absolute; width: 100%; text-align: center; line-height: 30px; font-weight: bold; color: #333; }";
+  html += ".battery-tip { width: 6px; height: 18px; background: #333; border-radius: 0 3px 3px 0; margin-left: 2px; }";
+  
   html += "</style>";
-  html += "</head><body>";
-  html += "<div class='container'>";
-  html += "<h1>" + deviceName + "</h1>";
-  
-  html += "<div class='info'>";
-  html += "<p><span class='label'>Device ID:</span> <span class='value'>" + deviceID + "</span></p>";
-  html += "<p><span class='label'>IP Address:</span> <span class='value'>" + ipAddress + "</span></p>";
-  html += "<p><span class='label'>WiFi SSID:</span> <span class='value'>" + String(WiFi.SSID()) + "</span></p>";
-  html += "<p><span class='label'>Signal:</span> <span class='value'>" + String(WiFi.RSSI()) + " dBm</span></p>";
-  html += "</div>";
-  
-  String statusClass = "warning";
-  String statusText = "Not Configured";
-  
-  if (apiConfigured) {
-    if (lastError.length() > 0) {
-      statusClass = "error";
-      statusText = "Error: " + lastError;
-    } else {
-      statusClass = "ok";
-      statusText = "Current Value: " + displayPrefix + currentValue;
-    }
-  }
-  
-  html += "<div class='status " + statusClass + "'>";
-  html += "<p><strong>API Status:</strong> " + statusText + "</p>";
-  if (apiConfigured) {
-    html += "<p><strong>Polling Interval:</strong> " + String(pollingInterval) + " seconds</p>";
-    html += "<p><strong>Display Mode:</strong> " + String(scrollEnabled ? "Scrolling" : "Static") + "</p>";
-    html += "<p><strong>Icon:</strong> " + String(iconEnabled ? "Enabled" : "Disabled") + "</p>";
-    html += "<p><strong>Brightness:</strong> " + String(autoBrightness ? "Auto (Light Sensor)" : "Manual (" + String(manualBrightness) + ")") + "</p>";
-  }
-  html += "</div>";
-  
-  html += "<div style='margin: 20px 0;'>";
-  html += "<a href='/config' class='button'>Configure API</a>";
-  html += "<button class='button danger' onclick='factoryReset()'>Factory Reset</button>";
-  html += "</div>";
-  
-  html += "</div>";
-  
   html += "<script>";
-  html += "function factoryReset() {";
-  html += "  if(confirm('Are you sure? This will erase all settings and WiFi credentials.')) {";
-  html += "    fetch('/reset').then(() => {";
-  html += "      alert('Device is resetting...');";
-  html += "    });";
-  html += "  }";
+  html += "function updateBattery() {";
+  html += "  fetch('/status').then(r => r.json()).then(data => {";
+  html += "    document.getElementById('batteryPercent').textContent = data.battery_percentage + '%';";
+  html += "    document.getElementById('batteryVoltage').textContent = data.battery_voltage + 'V';";
+  html += "    const fill = document.getElementById('batteryFill');";
+  html += "    fill.style.width = data.battery_percentage + '%';";
+  html += "    fill.className = 'battery-fill ' + (data.battery_percentage > 20 ? 'good' : data.battery_percentage > 10 ? 'low' : 'critical');";
+  html += "    document.getElementById('batteryText').textContent = data.battery_percentage + '%';";
+  html += "  });";
   html += "}";
+  html += "setInterval(updateBattery, 5000);";
+  html += "window.addEventListener('load', updateBattery);";
   html += "</script>";
+  html += "</head><body>";
   
+  html += "<div class='container'>";
+  html += "<h1>TC001-Display-" + deviceID + "</h1>";
+  
+  // Battery Status Section
+  html += "<h2>Battery Status</h2>";
+  html += "<div class='battery-container'>";
+  html += "<div class='battery-bar'>";
+  html += "<div id='batteryFill' class='battery-fill good' style='width: " + String(batteryPercentage) + "%'></div>";
+  html += "<div id='batteryText' class='battery-text'>" + String(batteryPercentage) + "%</div>";
+  html += "</div>";
+  html += "<div class='battery-tip'></div>";
+  html += "</div>";
+  html += "<div class='info-row'>";
+  html += "<span class='label'>Battery Level:</span>";
+  html += "<span class='value' id='batteryPercent'>" + String(batteryPercentage) + "%</span>";
+  html += "</div>";
+  html += "<div class='info-row'>";
+  html += "<span class='label'>Voltage:</span>";
+  html += "<span class='value' id='batteryVoltage'>" + String(batteryVoltage, 2) + "V</span>";
+  html += "</div>";
+  
+  // Device Info
+  html += "<h2>Device Information</h2>";
+  html += "<div class='info-row'><span class='label'>Device ID:</span><span class='value'>" + deviceID + "</span></div>";
+  html += "<div class='info-row'><span class='label'>IP Address:</span><span class='value'>" + ipAddress + "</span></div>";
+  html += "<div class='info-row'><span class='label'>WiFi SSID:</span><span class='value'>" + String(WiFi.SSID()) + "</span></div>";
+  html += "<div class='info-row'><span class='label'>Signal Strength:</span><span class='value'>" + String(WiFi.RSSI()) + " dBm</span></div>";
+  html += "<div class='info-row'><span class='label'>Firmware:</span><span class='value'>v1.1.0 (Battery)</span></div>";
+  
+  // API Status
+  html += "<h2>API Status</h2>";
+  if (apiConfigured) {
+    html += "<div class='status ok'>";
+    html += "<strong>Configured</strong><br>";
+    html += "Current Value: <strong>" + currentValue + "</strong><br>";
+    html += "Last Update: " + String((millis() - lastAPICall) / 1000) + "s ago";
+    if (lastError.length() > 0) {
+      html += "<br>Last Error: " + lastError;
+    }
+    html += "</div>";
+  } else {
+    html += "<div class='status warning'>";
+    html += "<strong>Not Configured</strong><br>";
+    html += "Please configure API settings to begin monitoring.";
+    html += "</div>";
+  }
+  
+  // Display Settings
+  html += "<h2>Display Settings</h2>";
+  html += "<div class='info-row'><span class='label'>Scroll Mode:</span><span class='value'>" + String(scrollEnabled ? "Enabled" : "Static") + "</span></div>";
+  html += "<div class='info-row'><span class='label'>Brightness:</span><span class='value'>" + String(autoBrightness ? "Auto" : "Manual (" + String(manualBrightness) + ")") + "</span></div>";
+  html += "<div class='info-row'><span class='label'>Icon:</span><span class='value'>" + String(iconEnabled ? "Enabled" : "Disabled") + "</span></div>";
+  
+  // Action Buttons
+  html += "<h2>Actions</h2>";
+  html += "<a href='/config' class='button'>Configure API</a>";
+  html += "<a href='/status' class='button secondary'>View JSON Status</a>";
+  html += "<button onclick='if(confirm(\"Reset all settings?\")) location.href=\"/reset\"' class='button danger'>Factory Reset</button>";
+  
+  // Button Controls Info
+  html += "<h2>Button Controls</h2>";
+  html += "<div class='info-row'><span class='label'>Button 1 (startup):</span><span class='value'>Enter WiFi config</span></div>";
+  html += "<div class='info-row'><span class='label'>Button 2 + 3 (hold):</span><span class='value'>Show battery status</span></div>";
+  html += "<div class='info-row'><span class='label'>All 3 (hold 3s):</span><span class='value'>Factory reset</span></div>";
+  
+  html += "</div>";
   html += "</body></html>";
   
   server.send(200, "text/html", html);
@@ -733,10 +956,10 @@ void handleRoot() {
 
 void handleConfigPage() {
   String maskedKey = "";
-  if (apiKey.length() > 6) {
-    maskedKey = String("*").substring(0, apiKey.length() - 6) + apiKey.substring(apiKey.length() - 6);
-  } else if (apiKey.length() > 0) {
-    maskedKey = "******";
+  if (apiKey.length() > 0) {
+    for (unsigned int i = 0; i < apiKey.length(); i++) {
+      maskedKey += "*";
+    }
   }
   
   String html = "<!DOCTYPE html><html><head>";
@@ -745,92 +968,70 @@ void handleConfigPage() {
   html += "body { font-family: Arial, sans-serif; margin: 20px; background: #f0f0f0; }";
   html += ".container { max-width: 600px; margin: 0 auto; background: white; padding: 20px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }";
   html += "h1 { color: #333; border-bottom: 2px solid #4CAF50; padding-bottom: 10px; }";
-  html += ".form-group { margin: 15px 0; }";
-  html += "label { display: block; font-weight: bold; color: #666; margin-bottom: 5px; }";
-  html += "input[type='text'], input[type='password'], input[type='number'], textarea { width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 5px; box-sizing: border-box; font-size: 1em; font-family: monospace; }";
-  html += "input[type='checkbox'] { width: auto; margin-right: 8px; }";
-  html += "textarea { min-height: 100px; resize: vertical; }";
-  html += ".button { background: #4CAF50; color: white; padding: 12px 24px; border: none; border-radius: 5px; cursor: pointer; font-size: 1em; margin: 10px 5px; }";
+  html += "label { display: block; margin-top: 15px; font-weight: bold; color: #555; }";
+  html += "input[type='text'], input[type='password'], input[type='number'], textarea { ";
+  html += "width: 100%; padding: 10px; margin-top: 5px; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; }";
+  html += "textarea { min-height: 60px; font-family: monospace; }";
+  html += "input[type='checkbox'] { margin-top: 10px; }";
+  html += ".checkbox-label { display: inline-block; margin-left: 8px; font-weight: normal; }";
+  html += ".button { background: #4CAF50; color: white; padding: 12px 24px; border: none; ";
+  html += "border-radius: 5px; cursor: pointer; font-size: 16px; margin: 10px 5px 0 0; text-decoration: none; display: inline-block; }";
   html += ".button:hover { background: #45a049; }";
-  html += ".button.secondary { background: #2196F3; }";
-  html += ".button.secondary:hover { background: #0b7dda; }";
-  html += ".help { font-size: 0.9em; color: #666; margin-top: 5px; }";
-  html += ".example { background: #f5f5f5; padding: 10px; border-radius: 5px; margin-top: 10px; font-family: monospace; font-size: 0.85em; }";
-  html += "#iconPreview { display: inline-block; margin: 10px 0; border: 1px solid #ddd; }";
-  html += ".icon-pixel { width: 20px; height: 20px; display: inline-block; }";
+  html += ".button.secondary { background: #008CBA; }";
+  html += ".help { font-size: 12px; color: #666; margin-top: 5px; font-style: italic; }";
+  html += ".icon-preview { margin-top: 10px; }";
+  html += ".icon-pixel { width: 15px; height: 15px; display: inline-block; border: 1px solid #ddd; }";
+  html += ".status { padding: 15px; border-radius: 5px; margin: 10px 0; }";
+  html += ".status.ok { background: #d4edda; color: #155724; }";
+  html += ".status.error { background: #f8d7da; color: #721c24; }";
   html += "</style>";
   html += "</head><body>";
+  
   html += "<div class='container'>";
   html += "<h1>API Configuration</h1>";
   
   html += "<form method='POST' action='/save'>";
   
-  html += "<div class='form-group'>";
   html += "<label>API Endpoint URL:</label>";
   html += "<input type='text' name='apiUrl' value='" + apiEndpoint + "' placeholder='https://api.example.com/data' required>";
   html += "<p class='help'>Full URL to your API endpoint</p>";
-  html += "</div>";
   
-  html += "<div class='form-group'>";
   html += "<label>API Header Name:</label>";
   html += "<input type='text' name='apiHeader' value='" + apiHeaderName + "' placeholder='APIKey'>";
-  html += "<p class='help'>Header name for authentication (e.g., APIKey, Authorization, X-API-Key)</p>";
-  html += "</div>";
+  html += "<p class='help'>Authentication header name (e.g., APIKey, Authorization, X-API-Key)</p>";
   
-  html += "<div class='form-group'>";
   html += "<label>API Key:</label>";
-  html += "<input type='password' name='apiKey' value='" + apiKey + "' placeholder='Your API key'>";
-  html += "<p class='help'>Leave blank if no authentication required. Current: " + (apiKey.length() > 0 ? maskedKey : "Not set") + "</p>";
-  html += "</div>";
+  html += "<input type='password' name='apiKey' value='" + apiKey + "' placeholder='" + (apiKey.length() > 0 ? maskedKey : "your-api-key-here") + "'>";
+  html += "<p class='help'>Your API authentication key</p>";
   
-  html += "<div class='form-group'>";
   html += "<label>JSON Path:</label>";
-  html += "<input type='text' name='jsonPath' value='" + jsonPath + "' placeholder='data.value' required>";
-  html += "<p class='help'>Path to the value in the JSON response</p>";
-  html += "<div class='example'>Examples:<br>count<br>data.unassigned<br>TC001MatrixDisplay[0].OpenRequests<br>results[0].value<br><strong>Array filtering:</strong><br>OverdueWorkflows[Username=Binai Prasad].Overdue<br>users[name=John].age</div>";
-  html += "</div>";
+  html += "<input type='text' name='jsonPath' value='" + jsonPath + "' placeholder='data.count' required>";
+  html += "<p class='help'>Path to value in JSON response (e.g., data.count or users[0].name or items[status=active].count)</p>";
   
-  html += "<div class='form-group'>";
-  html += "<label>Display Prefix (optional):</label>";
+  html += "<label>Display Prefix:</label>";
   html += "<input type='text' name='prefix' value='" + displayPrefix + "' placeholder='Tickets: '>";
-  html += "<p class='help'>Text to show before the value (e.g., 'Tickets: ' will display as 'Tickets: 42')</p>";
-  html += "</div>";
+  html += "<p class='help'>Text to show before the value (optional)</p>";
   
-  html += "<div class='form-group'>";
-  html += "<label>Display Suffix (optional):</label>";
-  html += "<input type='text' name='suffix' value='" + displaySuffix + "' placeholder=' items'>";
-  html += "<p class='help'>Text to show after the value (e.g., ' items' will display as '42 items')</p>";
-  html += "</div>";
+  html += "<label>Display Suffix:</label>";
+  html += "<input type='text' name='suffix' value='" + displaySuffix + "' placeholder=' open'>";
+  html += "<p class='help'>Text to show after the value (optional)</p>";
   
-  html += "<div class='form-group'>";
-  html += "<label>";
-  html += "<input type='checkbox' name='scroll' value='1' " + String(scrollEnabled ? "checked" : "") + "> Enable Scrolling";
-  html += "</label>";
-  html += "<p class='help'>When checked, content scrolls continuously. When unchecked, content is centered and static.</p>";
-  html += "</div>";
-  
-  html += "<div class='form-group'>";
-  html += "<label>Icon Data (optional):</label>";
+  html += "<label>Icon Data (8x8 RGB pixels):</label>";
   html += "<textarea name='iconData' id='iconData' placeholder='[[255,0,0],[0,255,0],...]'>" + iconData + "</textarea>";
-  html += "<p class='help'>8x8 icon as JSON array (64 pixels). Format: [[r,g,b],[r,g,b],...] Leave blank to disable icon.</p>";
-  html += "<div class='example'>Create icons using any pixel art tool that exports RGB arrays, or manually create the 64-pixel array.</div>";
-  html += "<div id='iconPreview'></div>";
-  html += "</div>";
+  html += "<p class='help'>JSON array of 64 RGB pixels [r,g,b] for 8x8 icon (optional)</p>";
+  html += "<div id='iconPreview' class='icon-preview'></div>";
   
-  html += "<div class='form-group'>";
+  html += "<label><input type='checkbox' name='scroll' " + String(scrollEnabled ? "checked" : "") + "><span class='checkbox-label'>Enable Scrolling</span></label>";
+  html += "<p class='help'>Uncheck for static centered display</p>";
+  
   html += "<label>Polling Interval (seconds):</label>";
-  html += "<input type='number' name='interval' value='" + String(pollingInterval) + "' min='5' max='3600'>";
+  html += "<input type='number' name='interval' value='" + String(pollingInterval) + "' min='5' max='3600' required>";
   html += "<p class='help'>How often to poll the API (5-3600 seconds)</p>";
-  html += "</div>";
   
-  html += "<div class='form-group'>";
-  html += "<label>";
-  html += "<input type='checkbox' name='autoBright' id='autoBright' value='1' " + String(autoBrightness ? "checked" : "") + " onchange='toggleBrightnessMode()'> Auto Brightness (Light Sensor)";
-  html += "</label>";
-  html += "<p class='help'>Automatically adjust brightness based on ambient light</p>";
-  html += "</div>";
+  html += "<label><input type='checkbox' name='autoBright' id='autoBright' onchange='toggleBrightnessMode()' " + String(autoBrightness ? "checked" : "") + "><span class='checkbox-label'>Auto Brightness</span></label>";
+  html += "<p class='help'>Use light sensor for automatic brightness control</p>";
   
-  html += "<div class='form-group' id='manualBrightnessGroup' style='display:" + String(autoBrightness ? "none" : "block") + "'>";
+  html += "<div id='manualBrightnessGroup' style='display: " + String(autoBrightness ? "none" : "block") + ";'>";
   html += "<label>Manual Brightness:</label>";
   html += "<input type='range' name='brightness' id='brightnessSlider' value='" + String(manualBrightness) + "' min='10' max='255' oninput='updateBrightnessLabel(this.value)'>";
   html += "<span id='brightnessValue'>" + String(manualBrightness) + "</span>";
@@ -908,9 +1109,9 @@ void handleSaveConfig() {
   displayPrefix = server.arg("prefix");
   displaySuffix = server.arg("suffix");
   pollingInterval = server.arg("interval").toInt();
-  scrollEnabled = server.hasArg("scroll"); // Checkbox: present = checked, absent = unchecked
+  scrollEnabled = server.hasArg("scroll");
   iconData = server.arg("iconData");
-  autoBrightness = server.hasArg("autoBright"); // Checkbox: present = checked, absent = unchecked
+  autoBrightness = server.hasArg("autoBright");
   manualBrightness = server.arg("brightness").toInt();
   
   if (pollingInterval < 5) pollingInterval = 5;
@@ -918,7 +1119,6 @@ void handleSaveConfig() {
   if (manualBrightness < 10) manualBrightness = 10;
   if (manualBrightness > 255) manualBrightness = 255;
   
-  // Parse icon data if provided, otherwise clear icon
   if (iconData.length() > 0) {
     parseIconData(iconData);
   } else {
@@ -927,17 +1127,14 @@ void handleSaveConfig() {
   
   saveConfiguration();
   
-  // Update apiConfigured flag
   apiConfigured = (apiEndpoint.length() > 0 && jsonPath.length() > 0);
   
-  // Apply brightness setting immediately
   if (autoBrightness) {
     updateBrightness();
   } else {
     matrix.setBrightness(manualBrightness);
   }
   
-  // Trigger immediate API poll and reset scroll
   if (apiConfigured) {
     pollAPI();
     lastAPICall = millis();
@@ -1027,7 +1224,9 @@ void handleStatus() {
   json += "\"api_configured\":" + String(apiConfigured ? "true" : "false") + ",";
   json += "\"icon_enabled\":" + String(iconEnabled ? "true" : "false") + ",";
   json += "\"current_value\":\"" + currentValue + "\",";
-  json += "\"last_error\":\"" + lastError + "\"";
+  json += "\"last_error\":\"" + lastError + "\",";
+  json += "\"battery_voltage\":" + String(batteryVoltage, 2) + ",";
+  json += "\"battery_percentage\":" + String(batteryPercentage);
   json += "}";
   
   server.send(200, "application/json", json);
@@ -1049,39 +1248,19 @@ void displayScrollText(const char* text, uint16_t color) {
 }
 
 void updateBrightness() {
-  // Read light sensor value (0-4095 for ESP32 12-bit ADC)
   int sensorValue = analogRead(LIGHT_SENSOR);
-  
-  // Debug: uncomment to see sensor readings
-  // Serial.print("Light sensor: ");
-  // Serial.println(sensorValue);
-  
-  // Map sensor reading to brightness range with lower minimum for dark rooms
-  // Typical sensor ranges:
-  // - Very dark (covered/night): 0-100
-  // - Dim room: 100-500
-  // - Normal indoor: 500-1500
-  // - Bright indoor/window: 1500-3000
-  // - Direct sunlight: 3000-4095
   
   int brightness;
   if (sensorValue < 1000) {
-    // Very dark - use very low brightness (1-5)
     brightness = map(sensorValue, 0, 1000, 1, 5);
   } else if (sensorValue < 2000) {
-    // Dim room - low to medium brightness (5-30)
     brightness = map(sensorValue, 1000, 2000, 5, 30);
   } else if (sensorValue < 3000) {
-    // Normal indoor - medium to high brightness (30-120)
     brightness = map(sensorValue, 2000, 3000, 30, 120);
   } else {
-    // Bright light - high brightness (120-255)
     brightness = map(sensorValue, 3000, 4095, 120, 255);
   }
   
-  // Constrain to valid range
   brightness = constrain(brightness, 1, 255);
-  // Serial.print("Setting brightness: ");
-  // Serial.println(brightness);
   matrix.setBrightness(brightness);
 }

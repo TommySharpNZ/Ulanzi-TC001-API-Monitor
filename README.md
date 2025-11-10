@@ -1,4 +1,4 @@
-# Ulanzi TC001 Custom Firmware - API Display Monitor
+# Ulanzi TC001 Custom Firmware - API Display Monitor v1.0.3
 
 Custom firmware for the Ulanzi TC001 pixel display clock that enables portable API monitoring for markets, trade shows and events. This firmware allows the device to poll APIs directly without requiring external servers like AWTRIX.
 
@@ -6,12 +6,14 @@ Custom firmware for the Ulanzi TC001 pixel display clock that enables portable A
 
 ## Table of Contents
 - [Overview](#overview)
+- [What's New in v1.0.3](#whats-new-in-v103)
 - [Hardware Specifications](#hardware-specifications)
 - [Features](#features)
 - [Requirements](#requirements)
 - [Installation](#installation)
 - [Configuration](#configuration)
 - [Usage](#usage)
+- [Battery Monitoring](#battery-monitoring)
 - [API Requirements](#api-requirements)
 - [Button Controls](#button-controls)
 - [Development](#development)
@@ -34,11 +36,23 @@ The TC001 Custom Firmware transforms your Ulanzi TC001 into a self-contained API
 **Why This Over AWTRIX?**
 AWTRIX requires an external server to POST data to the device. This firmware polls APIs directly from the device, making it ideal for portable use on public WiFi networks where you can't run external servers.
 
+## What's New in v1.0.3
+
+### 🔋 Battery Monitoring Features
+
+- **Real-time battery monitoring** - Voltage and percentage tracking
+- **Web UI display** - Live battery status with visual indicator
+- **Button combination** - Hold Button 2 + Button 3 to show battery on display
+- **Low battery warnings** - Audio alerts at 20% (low) and 10% (critical)
+- **Smart voltage curve** - Accurate LiPo battery percentage calculation
+- **Auto-refresh** - Battery status updates every 5 seconds in web UI
+
 ## Hardware Specifications
 
 **Device:** Ulanzi TC001 Pixel Display Clock
 **Display:** 32x8 WS2812 LED Matrix
 **Microcontroller:** ESP32
+**Battery:** Built-in LiPo battery (monitored via GPIO34)
 
 ### Pinout Reference
 | GPIO | Function |
@@ -50,7 +64,7 @@ AWTRIX requires an external server to POST data to the device. This firmware pol
 | GPIO26 | Button 1 |
 | GPIO27 | Button 2 |
 | GPIO32 | WS2812 LED Matrix |
-| GPIO34 | ADC Input |
+| GPIO34 | Battery ADC (voltage monitoring) |
 | GPIO35 | Light Sensor |
 
 ## Features
@@ -100,9 +114,20 @@ AWTRIX requires an external server to POST data to the device. This firmware pol
 #### Web Interface
 - ⚙️ Full configuration page
 - 🧪 API connection testing
-- 📊 Status monitoring
+- 📊 Status monitoring with battery info
+- 🔋 Live battery status display
 - 🔄 Factory reset option
 - 👁️ Icon preview before saving
+
+#### Battery Management 🔋
+- 📊 Real-time voltage and percentage monitoring
+- 🎨 Color-coded battery display (green/orange/red/cyan)
+- 🔊 Low battery audio alerts (20% and 10%)
+- ⚡ Charging status detection
+- 📱 Web UI with live battery indicator
+- 🎮 Button combination (Button 2 + 3) to show battery
+- 📈 Non-linear voltage curve for accurate LiPo readings
+- 🔔 Critical battery warnings with double beep
 
 #### Security
 - 🔒 Secure NVS storage for API keys
@@ -187,7 +212,7 @@ esptool.py --port COM3 --baud 115200 write_flash 0x0 tc001_backup.bin
 3. Captive portal should open automatically (or navigate to `192.168.4.1`)
 4. Configure your WiFi credentials
 5. Device will connect and display its IP address
-6. Browse to the displayed IP address to configure API settings
+6. Browse to the displayed IP address to continue configuration
 
 ## Configuration
 
@@ -195,7 +220,7 @@ esptool.py --port COM3 --baud 115200 write_flash 0x0 tc001_backup.bin
 
 Navigate to your TC001's IP address (displayed on the LED matrix) to access the configuration interface.
 
-#### API Settings
+### API Settings
 
 | Setting | Description | Example |
 |---------|-------------|---------|
@@ -211,7 +236,7 @@ Navigate to your TC001's IP address (displayed on the LED matrix) to access the 
 | **Auto Brightness** | Checkbox for automatic brightness control | Checked = use light sensor, Unchecked = manual |
 | **Manual Brightness** | Slider for brightness level (when auto disabled) | `40` (range: 1-255) |
 
-### JSON Path Examples
+#### JSON Path Examples
 
 The firmware supports flexible JSON path navigation with array filtering:
 
@@ -254,7 +279,7 @@ JSON Path: `OverdueWorkflows[Username=Jane].Overdue`
 ```
 JSON Path: `TC001MatrixDisplay[0].OpenRequests`
 
-### Array Filtering Syntax
+#### Array Filtering Syntax
 
 Use the format `arrayName[fieldName=value]` to filter arrays:
 - `users[name=John].age` - Find user with name "John" and get their age
@@ -321,6 +346,58 @@ Before saving, use the **Test Connection** button to verify:
 - Authentication is working
 - JSON path correctly extracts the value
 - Response format is as expected
+
+### Battery Monitoring
+
+The TC001 has a built-in LiPo battery that is continuously monitored. The firmware provides comprehensive battery information:
+
+Battery Voltage Ranges
+- **4.2V** = 100% (fully charged)
+- **3.9V** = ~75% (good)
+- **3.7V** = ~40% (moderate)
+- **3.5V** = ~15% (low)
+- **3.0V** = 0% (empty)
+
+#### Battery Status Indicators
+
+**Web UI Display:**
+- 🟢 **Green bar** = Good battery (> 20%)
+- 🟠 **Orange bar** = Low battery (10-20%)
+- 🔴 **Red bar** = Critical battery (< 10%)
+- 🔵 **Cyan animated bar** = Charging
+
+**LED Display Colors:**
+- **Green** = Good battery level
+- **Orange** = Low battery warning
+- **Red** = Critical battery
+- **Cyan** = Currently charging
+
+#### Audio Alerts
+- **Single beep** = Low battery warning (20%) - plays once per boot
+- **Double beep** = Critical battery (10%) - repeats periodically
+
+#### Viewing Battery Status
+
+Method 1: Web Interface
+1. Navigate to your TC001's IP address in a browser
+2. Battery status appears at the top with:
+   - Visual battery bar indicator
+   - Percentage and voltage display
+   - Charging status
+   - Auto-refresh every 5 seconds
+
+Method 2: Button Combination
+1. **Hold Button 2 + Button 3** together for 0.5 seconds
+2. Battery information displays on the LED matrix for 3 seconds
+3. Shows: `BAT: XX% X.XXV` (and `[CHG]` if charging)
+
+#### Battery Monitoring Configuration
+
+Battery monitoring runs automatically with these settings:
+- **Update interval:** 5 seconds
+- **Samples per reading:** 10 (averaged for stability)
+- **Low battery threshold:** 20%
+- **Critical threshold:** 10%
 
 ## Usage
 
@@ -445,8 +522,9 @@ The API can return any valid JSON structure. Use the JSON path configuration to 
 | Action | Result |
 |--------|--------|
 | **Hold Button 1 during startup** | Enter WiFi configuration mode |
+| **Hold Button 2 + Button 3 for 0.5s** | Show battery status on display (3 seconds) |
 | **Hold all 3 buttons for 3 seconds** | Factory reset (WiFi + API settings) |
-| **Hold Left + Right buttons** | Power on/off (stock firmware feature) |
+| **Hold Left + Right buttons** | Power on/off (hardware feature) |
 
 ### Factory Reset
 
@@ -470,7 +548,7 @@ Currently single-file Arduino sketch:
 ```
 TC001_Custom/
 ├── Ulanzi-TC001-API-Monitor.ino    # Main firmware file
-└── README.md                       # This file
+└── README.md                                 # This file
 ```
 
 ### Code Organization
@@ -481,59 +559,50 @@ Main components:
 - **API Client** - HTTP requests, JSON parsing with array filtering
 - **Display Manager** - LED matrix control, scrolling and static modes
 - **Icon Handler** - JSON icon parsing, RGB565 conversion, rendering
+- **Battery Monitor** - Voltage reading, percentage calculation, alerts
 - **Storage** - NVS preferences for configuration
 - **Button Handler** - Physical button controls
 
 ### Key Functions
 
 ```cpp
+// Battery monitoring
+void updateBatteryStatus()        // Read and calculate battery status
+int calculateBatteryPercentage()  // Convert voltage to percentage
+void scrollBatteryDisplay()       // Show battery on LED display
+void showBatteryOnDisplay()       // Trigger battery display via button
+
+// API and display
 void pollAPI()                    // Make API request and parse response
-String extractJSONValue()         // Navigate JSON path and extract value (supports filtering)
+String extractJSONValue()         // Navigate JSON path and extract value
 void scrollCurrentValue()         // Update LED display (scroll or static)
 void parseIconData()              // Parse JSON icon array to RGB565
+
+// Configuration
 void loadConfiguration()          // Load settings from NVS
 void saveConfiguration()          // Save settings to NVS
 void handleConfigPage()           // Serve web configuration page
 ```
-
-### Customization
-
-The firmware can be extended with:
-- Multiple API endpoints (button navigation)
-- Custom display modes
-- Threshold-based color coding
-- Data visualization
-- Historical trending
-- Animation sequences
-
-### Building From Source
-
-1. Clone the repository
-2. Open `Ulanzi-TC001-API-Monitor.ino` in Arduino IDE
-3. Install required libraries
-4. Select ESP32 Dev Module board
-5. Compile and upload
 
 ## Future Enhancements
 
 Planned features for future releases:
 
 ### High Priority
-- [ ] Multiple API endpoint support with button navigation
-- [x] ~~Brightness adjustment (automatic based on light sensor)~~ **✅ IMPLEMENTED**
-- [ ] Display rotation modes
-- [ ] Icon animation support
+- [ ] Concept of "screens" allowing for multiple API endpoint support with button navigation or auto rotation
+- [ ] Multiple API endpoints with button navigation
 
 ### Medium Priority
-- [ ] Multiple display pages with auto-rotation
 - [ ] Threshold-based color coding (e.g., red if value > 10)
 - [ ] Time display option
 - [ ] Temperature/weather display
+- [ ] Combination of button press to force refresh of current screen
+- [ ] Historical battery usage graphs
 
 ### Low Priority
 - [ ] OTA (Over-The-Air) firmware updates
-- [ ] MQTT support
-- [ ] Historical data graphing
+- [ ] Show recent serial log entries in web config UI
+- [ ] Export battery history data
 
 ## Troubleshooting
 
@@ -615,6 +684,7 @@ Then open Serial Monitor (115200 baud) to view real-time sensor values and corre
 Connect USB and open Serial Monitor (115200 baud) to see:
 - Startup messages
 - WiFi connection status
+- Battery voltage and percentage
 - API request/response details
 - JSON parsing results
 - Icon parsing status
@@ -628,6 +698,15 @@ Connect USB and open Serial Monitor (115200 baud) to see:
 - Settings persist across firmware updates
 - Factory reset clears both WiFi and custom NVS
 - Icon data stored as JSON string (max ~512 bytes)
+
+### Battery Monitoring Details
+- ADC: 12-bit resolution (0-4095) on GPIO34
+- Reference voltage: 3.3V
+- Voltage divider: Typically 2:1 ratio
+- Update frequency: Every 10 seconds
+- Samples per reading: 10 (averaged)
+- Non-linear voltage curve for LiPo batteries
+- Charging detection via voltage analysis
 
 ### Security Considerations
 - API keys stored in plaintext in NVS
@@ -646,6 +725,7 @@ Connect USB and open Serial Monitor (115200 baud) to see:
 - Display update rate: 50ms per scroll step (scrolling mode)
 - Static mode: Updates every 1 second
 - Auto brightness: Updates every 100ms
+- Battery monitoring: Updates every 10 seconds
 - Memory usage: ~150KB RAM with icon loaded
 
 ### Brightness Control Details
@@ -664,6 +744,7 @@ Connect USB and open Serial Monitor (115200 baud) to see:
 Contributions welcome! Areas for improvement:
 - Documentation improvements
 - Bug fixes and testing
+- Battery monitoring enhancements
 - New features
 - Icon library
 - Example configurations

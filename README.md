@@ -1,4 +1,4 @@
-# Ulanzi TC001 Custom Firmware - API Display Monitor v1.0.3
+# Ulanzi TC001 Custom Firmware - API Display Monitor
 
 Custom firmware for the Ulanzi TC001 pixel display clock that enables portable API monitoring for markets, trade shows and events. This firmware allows the device to poll APIs directly without requiring external servers like AWTRIX.
 

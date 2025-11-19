@@ -8,6 +8,9 @@
 #include <ArduinoJson.h>
 #include <Preferences.h>
 
+// Project Details
+String buildNumber = "v1.0.4";
+
 // Pin definitions
 #define BUTTON_1 26
 #define BUTTON_2 27
@@ -68,7 +71,7 @@ const int brightnessUpdateInterval = 100; // Update brightness every 100ms
 float batteryVoltage = 0.0;
 int batteryPercentage = 0;
 unsigned long lastBatteryUpdate = 0;
-const unsigned long batteryUpdateInterval = 5000; // Update battery every 5 seconds
+const unsigned long batteryUpdateInterval = 10000; // Update battery every 10 seconds
 bool showBatteryRequested = false;
 unsigned long batteryDisplayTime = 0;
 const unsigned long batteryDisplayDuration = 3000; // Show battery for 3 seconds
@@ -116,8 +119,7 @@ void displayUpdateTask(void * parameter) {
 
 void setup() {
   Serial.begin(115200);
-  Serial.println("\n\nTC001 Custom Firmware Starting...");
-  Serial.println("Version: 1.1.0 - Battery Monitoring Edition");
+  Serial.println("\n\nTC001 Custom Firmware " + buildNumber + " Starting...");
   
   // Get MAC address and create unique device ID
   uint8_t mac[6];
@@ -277,7 +279,6 @@ void updateBatteryStatus() {
   // ESP32 ADC is 12-bit (0-4095) with 3.3V reference
   // Adjust the multiplier based on your voltage divider ratio
   // Common TC001 voltage divider is 2:1, so multiply by 2
-  // You may need to calibrate this value for your specific hardware
   batteryVoltage = (rawValue / 4095.0) * 3.3 * 2.0;
   
   // Apply calibration offset if needed (measure actual voltage and adjust)
@@ -340,8 +341,7 @@ int calculateBatteryPercentage(float voltage) {
 }
 
 void scrollBatteryDisplay() {
-  String batteryText = "BAT: " + String(batteryPercentage) + "% ";
-  batteryText += String(batteryVoltage, 2) + "V";
+  String batteryText = String(batteryPercentage) + "% ";
   
   // Choose color based on battery level
   uint16_t color;
@@ -405,7 +405,7 @@ void loadConfiguration() {
   pollingInterval = preferences.getInt("interval", 60);
   scrollEnabled = preferences.getBool("scroll", true);
   iconData = preferences.getString("iconData", "");
-  autoBrightness = preferences.getBool("autoBright", false);
+  autoBrightness = preferences.getBool("autoBrightness", false);
   manualBrightness = preferences.getInt("brightness", 40);
   
   preferences.end();
@@ -443,7 +443,7 @@ void loadConfiguration() {
   }
 }
 
-void saveConfiguration() {
+void saveAPIConfiguration() {
   preferences.begin("tc001", false);
   
   preferences.putString("apiUrl", apiEndpoint);
@@ -455,7 +455,7 @@ void saveConfiguration() {
   preferences.putInt("interval", pollingInterval);
   preferences.putBool("scroll", scrollEnabled);
   preferences.putString("iconData", iconData);
-  preferences.putBool("autoBright", autoBrightness);
+  preferences.putBool("autoBrightness", autoBrightness);
   preferences.putInt("brightness", manualBrightness);
   
   preferences.end();
@@ -828,11 +828,15 @@ void parseIconData(const String& jsonData) {
 
 void setupWebServer() {
   server.on("/", handleRoot);
-  server.on("/config", handleConfigPage);
-  server.on("/save", HTTP_POST, handleSaveConfig);
+  server.on("/config/api", handleAPIConfigPage);
+  server.on("/config/api/save", HTTP_POST, handleSaveAPIConfig);
+  server.on("/config/general", handleGeneralConfig);  // General config page
+  server.on("/config/general/save", HTTP_POST, handleSaveGeneralConfig);  // General config save handler
   server.on("/test", handleTestAPI);
   server.on("/reset", handleFactoryReset);
   server.on("/status", handleStatus);
+  server.on("/restart", handleRestart);
+  server.on("/favicon.ico", handleFavicon);
 }
 
 void handleRoot() {
@@ -846,8 +850,7 @@ void handleRoot() {
   html += ".info-row { display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #eee; }";
   html += ".label { font-weight: bold; color: #666; }";
   html += ".value { color: #333; }";
-  html += ".button { display: inline-block; background: #4CAF50; color: white; padding: 10px 20px; ";
-  html += "text-decoration: none; border-radius: 5px; margin: 5px; border: none; cursor: pointer; }";
+  html += ".button { display: inline-block; background: #4CAF50; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; margin: 5px; border: none; cursor: pointer; }";
   html += ".button:hover { background: #45a049; }";
   html += ".button.secondary { background: #008CBA; }";
   html += ".button.danger { background: #f44336; }";
@@ -855,54 +858,11 @@ void handleRoot() {
   html += ".status.ok { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }";
   html += ".status.error { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }";
   html += ".status.warning { background: #fff3cd; color: #856404; border: 1px solid #ffeaa7; }";
-  
-  // Battery status styles
-  html += ".battery-container { display: flex; align-items: center; gap: 10px; margin: 15px 0; }";
-  html += ".battery-bar { width: 200px; height: 30px; border: 2px solid #333; border-radius: 5px; position: relative; overflow: hidden; }";
-  html += ".battery-fill { height: 100%; transition: width 0.3s ease; }";
-  html += ".battery-fill.good { background: #4CAF50; }";
-  html += ".battery-fill.low { background: #FFA726; }";
-  html += ".battery-fill.critical { background: #f44336; }";
-  html += ".battery-text { position: absolute; width: 100%; text-align: center; line-height: 30px; font-weight: bold; color: #333; }";
-  html += ".battery-tip { width: 6px; height: 18px; background: #333; border-radius: 0 3px 3px 0; margin-left: 2px; }";
-  
   html += "</style>";
-  html += "<script>";
-  html += "function updateBattery() {";
-  html += "  fetch('/status').then(r => r.json()).then(data => {";
-  html += "    document.getElementById('batteryPercent').textContent = data.battery_percentage + '%';";
-  html += "    document.getElementById('batteryVoltage').textContent = data.battery_voltage + 'V';";
-  html += "    const fill = document.getElementById('batteryFill');";
-  html += "    fill.style.width = data.battery_percentage + '%';";
-  html += "    fill.className = 'battery-fill ' + (data.battery_percentage > 20 ? 'good' : data.battery_percentage > 10 ? 'low' : 'critical');";
-  html += "    document.getElementById('batteryText').textContent = data.battery_percentage + '%';";
-  html += "  });";
-  html += "}";
-  html += "setInterval(updateBattery, 5000);";
-  html += "window.addEventListener('load', updateBattery);";
-  html += "</script>";
   html += "</head><body>";
   
   html += "<div class='container'>";
   html += "<h1>TC001-Display-" + deviceID + "</h1>";
-  
-  // Battery Status Section
-  html += "<h2>Battery Status</h2>";
-  html += "<div class='battery-container'>";
-  html += "<div class='battery-bar'>";
-  html += "<div id='batteryFill' class='battery-fill good' style='width: " + String(batteryPercentage) + "%'></div>";
-  html += "<div id='batteryText' class='battery-text'>" + String(batteryPercentage) + "%</div>";
-  html += "</div>";
-  html += "<div class='battery-tip'></div>";
-  html += "</div>";
-  html += "<div class='info-row'>";
-  html += "<span class='label'>Battery Level:</span>";
-  html += "<span class='value' id='batteryPercent'>" + String(batteryPercentage) + "%</span>";
-  html += "</div>";
-  html += "<div class='info-row'>";
-  html += "<span class='label'>Voltage:</span>";
-  html += "<span class='value' id='batteryVoltage'>" + String(batteryVoltage, 2) + "V</span>";
-  html += "</div>";
   
   // Device Info
   html += "<h2>Device Information</h2>";
@@ -910,7 +870,9 @@ void handleRoot() {
   html += "<div class='info-row'><span class='label'>IP Address:</span><span class='value'>" + ipAddress + "</span></div>";
   html += "<div class='info-row'><span class='label'>WiFi SSID:</span><span class='value'>" + String(WiFi.SSID()) + "</span></div>";
   html += "<div class='info-row'><span class='label'>Signal Strength:</span><span class='value'>" + String(WiFi.RSSI()) + " dBm</span></div>";
-  html += "<div class='info-row'><span class='label'>Firmware:</span><span class='value'>v1.1.0 (Battery)</span></div>";
+  html += "<div class='info-row'><span class='label'>Firmware:</span><span class='value'>" + buildNumber + "</span></div>";
+  html += "<div class='info-row'><span class='label'>Battery Level:</span><span class='value' id='batteryPercent'>" + String(batteryPercentage) + "%</span></div>";
+  html += "<div class='info-row'><span class='label'>Voltage:</span><span class='value' id='batteryVoltage'>" + String(batteryVoltage, 2) + "V</span></div>";  
   
   // API Status
   html += "<h2>API Status</h2>";
@@ -932,17 +894,17 @@ void handleRoot() {
   
   // Display Settings
   html += "<h2>Display Settings</h2>";
-  html += "<div class='info-row'><span class='label'>Scroll Mode:</span><span class='value'>" + String(scrollEnabled ? "Enabled" : "Static") + "</span></div>";
   html += "<div class='info-row'><span class='label'>Brightness:</span><span class='value'>" + String(autoBrightness ? "Auto" : "Manual (" + String(manualBrightness) + ")") + "</span></div>";
-  html += "<div class='info-row'><span class='label'>Icon:</span><span class='value'>" + String(iconEnabled ? "Enabled" : "Disabled") + "</span></div>";
   
   // Action Buttons
   html += "<h2>Actions</h2>";
-  html += "<a href='/config' class='button'>Configure API</a>";
-  html += "<a href='/status' class='button secondary'>View JSON Status</a>";
+  html += "<button onclick='location.href=\"/config/general\"' class='button'>Config</button>";
+  html += "<button onclick='location.href=\"/config/api\"' class='button'>Configure API</button>";
+  html += "<button onclick='location.href=\"/status\"' class='button secondary'>View JSON Status</button>";
+  html += "<button onclick='if(confirm(\"Restart Device?\")) location.href=\"/restart\"' class='button secondary'>Restart</button>";
   html += "<button onclick='if(confirm(\"Reset all settings?\")) location.href=\"/reset\"' class='button danger'>Factory Reset</button>";
   
-  // Button Controls Info
+  // Physical Button Controls Info
   html += "<h2>Button Controls</h2>";
   html += "<div class='info-row'><span class='label'>Button 1 (startup):</span><span class='value'>Enter WiFi config</span></div>";
   html += "<div class='info-row'><span class='label'>Button 2 + 3 (hold):</span><span class='value'>Show battery status</span></div>";
@@ -954,16 +916,10 @@ void handleRoot() {
   server.send(200, "text/html", html);
 }
 
-void handleConfigPage() {
-  String maskedKey = "";
-  if (apiKey.length() > 0) {
-    for (unsigned int i = 0; i < apiKey.length(); i++) {
-      maskedKey += "*";
-    }
-  }
-  
+void handleGeneralConfig() {
   String html = "<!DOCTYPE html><html><head>";
-  html += "<meta name='viewport' content='width=device-width, initial-scale=1'>";
+  html += "<meta name='viewport' content='width=device-width, initial-scale=1'>";  
+  html += "<title>General Settings - " + deviceName + "</title>";
   html += "<style>";
   html += "body { font-family: Arial, sans-serif; margin: 20px; background: #f0f0f0; }";
   html += ".container { max-width: 600px; margin: 0 auto; background: white; padding: 20px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }";
@@ -974,10 +930,10 @@ void handleConfigPage() {
   html += "textarea { min-height: 60px; font-family: monospace; }";
   html += "input[type='checkbox'] { margin-top: 10px; }";
   html += ".checkbox-label { display: inline-block; margin-left: 8px; font-weight: normal; }";
-  html += ".button { background: #4CAF50; color: white; padding: 12px 24px; border: none; ";
-  html += "border-radius: 5px; cursor: pointer; font-size: 16px; margin: 10px 5px 0 0; text-decoration: none; display: inline-block; }";
+  html += ".button { display: inline-block; background: #4CAF50; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; margin: 5px; border: none; cursor: pointer; }";
   html += ".button:hover { background: #45a049; }";
   html += ".button.secondary { background: #008CBA; }";
+  html += ".button.danger { background: #f44336; }";
   html += ".help { font-size: 12px; color: #666; margin-top: 5px; font-style: italic; }";
   html += ".icon-preview { margin-top: 10px; }";
   html += ".icon-pixel { width: 15px; height: 15px; display: inline-block; border: 1px solid #ddd; }";
@@ -986,11 +942,143 @@ void handleConfigPage() {
   html += ".status.error { background: #f8d7da; color: #721c24; }";
   html += "</style>";
   html += "</head><body>";
+  html += "<div class='container'>";
+  html += "<h1>General Settings</h1>";
+    
+  html += "<form method='POST' action='/config/general/save' accept-charset='utf-8'>";
   
+  // Brightness settings section
+  html += "<h2>Display Brightness</h2>";
+
+  html += "<label><input type='checkbox' name='autoBrightness' id='autoBrightness' onchange='toggleBrightnessMode()' " + String(autoBrightness ? "checked" : "") + "><span class='checkbox-label'>Auto Brightness</span></label>";
+  html += "<p class='help'>Use light sensor for automatic brightness control</p>";
+  
+  html += "<div id='manualBrightnessGroup' style='display: " + String(autoBrightness ? "none" : "block") + ";'>";
+  html += "<label>Manual Brightness:</label>";
+  html += "<input type='range' name='brightness' id='brightnessSlider' value='" + String(manualBrightness) + "' min='10' max='255' oninput='updateBrightnessLabel(this.value)'>";
+  html += "<span id='brightnessValue'>" + String(manualBrightness) + "</span>";
+  html += "<p class='help'>Set brightness level (10-255)</p>";
+  html += "</div>";
+
+  html += "<button type='submit' class='button'>Save Settings</button>";
+  html += "<button type='button' onclick='location.href=\"/\"' class='button secondary'>Back</button>";
+  
+  html += "</form>";
+
+  html += "<div id='testResult' style='margin-top: 20px;'></div>";
+  
+  html += "</div>";
+  
+  html += "<script>";
+  html += "function toggleBrightnessMode() {";
+  html += "  const isAuto = document.getElementById('autoBrightness').checked;";
+  html += "  document.getElementById('manualBrightnessGroup').style.display = isAuto ? 'none' : 'block';";
+  html += "}";
+  html += "function updateBrightnessLabel(value) {";
+  html += "  document.getElementById('brightnessValue').textContent = value;";
+  html += "}";
+  html += "</script>";
+
+  html += "</body></html>";
+  
+  server.send(200, "text/html", html);
+}
+
+void handleSaveGeneralConfig() {
+  Serial.println("=== Saving general configuration ===");
+  
+  // Debug: Show all received arguments
+  Serial.print("Number of arguments received: ");
+  Serial.println(server.args());
+  for (int i = 0; i < server.args(); i++) {
+    Serial.print("  Arg ");
+    Serial.print(i);
+    Serial.print(": ");
+    Serial.print(server.argName(i));
+    Serial.print(" = ");
+    Serial.println(server.arg(i));
+  }
+  
+  autoBrightness = server.hasArg("autoBrightness");
+  Serial.print("Auto Brightness: ");
+  Serial.println(autoBrightness ? "ENABLED" : "DISABLED");
+  
+  if (server.hasArg("brightness")) {
+    int newBrightness = server.arg("brightness").toInt();
+    Serial.print("Brightness value received: ");
+    Serial.println(newBrightness);
+    
+    manualBrightness = newBrightness;
+    if (manualBrightness < 1) manualBrightness = 1;
+    if (manualBrightness > 255) manualBrightness = 255;
+    
+    Serial.print("Brightness value after validation: ");
+    Serial.println(manualBrightness);
+  } else {
+    Serial.println("WARNING: No brightness argument received!");
+  }
+  
+  // Save to preferences
+  Serial.println("Writing to preferences...");
+  preferences.begin("tc001", false);
+  preferences.putBool("autoBrightness", autoBrightness);
+  preferences.putInt("brightness", manualBrightness);
+  preferences.end();
+  Serial.println("Preferences written successfully");
+  
+  // Apply brightness immediately
+  if (!autoBrightness) {
+    Serial.print("Applying manual brightness: ");
+    Serial.println(manualBrightness);
+    matrix.setBrightness(manualBrightness);
+  } else {
+    Serial.println("Auto brightness enabled - will use light sensor");
+  }
+  
+  Serial.println("=== General settings saved ===");
+  
+  // Redirect back to general config page
+  server.sendHeader("Location", "/");
+  server.send(303);
+}
+
+void handleAPIConfigPage() {
+  String maskedKey = "";
+  if (apiKey.length() > 0) {
+    for (unsigned int i = 0; i < apiKey.length(); i++) {
+      maskedKey += "*";
+    }
+  }
+  
+  String html = "<!DOCTYPE html><html><head>";
+  html += "<meta name='viewport' content='width=device-width, initial-scale=1'>";
+  html += "<title>API Settings - " + deviceName + "</title>";  
+  html += "<style>";
+  html += "body { font-family: Arial, sans-serif; margin: 20px; background: #f0f0f0; }";
+  html += ".container { max-width: 600px; margin: 0 auto; background: white; padding: 20px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }";
+  html += "h1 { color: #333; border-bottom: 2px solid #4CAF50; padding-bottom: 10px; }";
+  html += "label { display: block; margin-top: 15px; font-weight: bold; color: #555; }";
+  html += "input[type='text'], input[type='password'], input[type='number'], textarea { ";
+  html += "width: 100%; padding: 10px; margin-top: 5px; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; }";
+  html += "textarea { min-height: 60px; font-family: monospace; }";
+  html += "input[type='checkbox'] { margin-top: 10px; }";
+  html += ".checkbox-label { display: inline-block; margin-left: 8px; font-weight: normal; }";
+  html += ".button { display: inline-block; background: #4CAF50; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; margin: 5px; border: none; cursor: pointer; }";
+  html += ".button:hover { background: #45a049; }";
+  html += ".button.secondary { background: #008CBA; }";
+  html += ".button.danger { background: #f44336; }";
+  html += ".help { font-size: 12px; color: #666; margin-top: 5px; font-style: italic; }";
+  html += ".icon-preview { margin-top: 10px; }";
+  html += ".icon-pixel { width: 15px; height: 15px; display: inline-block; border: 1px solid #ddd; }";
+  html += ".status { padding: 15px; border-radius: 5px; margin: 10px 0; }";
+  html += ".status.ok { background: #d4edda; color: #155724; }";
+  html += ".status.error { background: #f8d7da; color: #721c24; }";
+  html += "</style>";
+  html += "</head><body>";
   html += "<div class='container'>";
   html += "<h1>API Configuration</h1>";
   
-  html += "<form method='POST' action='/save'>";
+  html += "<form method='POST' action='/config/api/save' accept-charset='utf-8'>";
   
   html += "<label>API Endpoint URL:</label>";
   html += "<input type='text' name='apiUrl' value='" + apiEndpoint + "' placeholder='https://api.example.com/data' required>";
@@ -1028,19 +1116,9 @@ void handleConfigPage() {
   html += "<input type='number' name='interval' value='" + String(pollingInterval) + "' min='5' max='3600' required>";
   html += "<p class='help'>How often to poll the API (5-3600 seconds)</p>";
   
-  html += "<label><input type='checkbox' name='autoBright' id='autoBright' onchange='toggleBrightnessMode()' " + String(autoBrightness ? "checked" : "") + "><span class='checkbox-label'>Auto Brightness</span></label>";
-  html += "<p class='help'>Use light sensor for automatic brightness control</p>";
-  
-  html += "<div id='manualBrightnessGroup' style='display: " + String(autoBrightness ? "none" : "block") + ";'>";
-  html += "<label>Manual Brightness:</label>";
-  html += "<input type='range' name='brightness' id='brightnessSlider' value='" + String(manualBrightness) + "' min='10' max='255' oninput='updateBrightnessLabel(this.value)'>";
-  html += "<span id='brightnessValue'>" + String(manualBrightness) + "</span>";
-  html += "<p class='help'>Set brightness level (10-255)</p>";
-  html += "</div>";
-  
   html += "<button type='submit' class='button'>Save Configuration</button>";
   html += "<button type='button' class='button secondary' onclick='testAPI()'>Test Connection</button>";
-  html += "<a href='/' class='button secondary'>Cancel</a>";
+  html += "<button type='button' onclick='location.href=\"/\"' class='button secondary'>Back</button>";
   
   html += "</form>";
   
@@ -1049,13 +1127,6 @@ void handleConfigPage() {
   html += "</div>";
   
   html += "<script>";
-  html += "function toggleBrightnessMode() {";
-  html += "  const isAuto = document.getElementById('autoBright').checked;";
-  html += "  document.getElementById('manualBrightnessGroup').style.display = isAuto ? 'none' : 'block';";
-  html += "}";
-  html += "function updateBrightnessLabel(value) {";
-  html += "  document.getElementById('brightnessValue').textContent = value;";
-  html += "}";
   html += "function testAPI() {";
   html += "  document.getElementById('testResult').innerHTML = '<p>Testing connection...</p>';";
   html += "  fetch('/test').then(r => r.text()).then(data => {";
@@ -1101,7 +1172,7 @@ void handleConfigPage() {
   server.send(200, "text/html", html);
 }
 
-void handleSaveConfig() {
+void handleSaveAPIConfig() {
   apiEndpoint = server.arg("apiUrl");
   apiHeaderName = server.arg("apiHeader");
   apiKey = server.arg("apiKey");
@@ -1111,7 +1182,7 @@ void handleSaveConfig() {
   pollingInterval = server.arg("interval").toInt();
   scrollEnabled = server.hasArg("scroll");
   iconData = server.arg("iconData");
-  autoBrightness = server.hasArg("autoBright");
+  autoBrightness = server.hasArg("autoBrightness");
   manualBrightness = server.arg("brightness").toInt();
   
   if (pollingInterval < 5) pollingInterval = 5;
@@ -1125,7 +1196,7 @@ void handleSaveConfig() {
     iconEnabled = false;
   }
   
-  saveConfiguration();
+  saveAPIConfiguration();
   
   apiConfigured = (apiEndpoint.length() > 0 && jsonPath.length() > 0);
   
@@ -1197,6 +1268,28 @@ void handleTestAPI() {
   server.send(200, "text/plain", response);
 }
 
+void handleRestart() {
+  Serial.println("Restart requested via web interface");
+  
+  String html = "<!DOCTYPE html><html><head>";
+  html += "<meta charset='UTF-8'>";
+  html += "<meta name='viewport' content='width=device-width, initial-scale=1.0'>";
+  html += "<title>Restarting...</title>";
+  html += "<style>body{font-family:Arial;text-align:center;padding:50px;background:#f0f0f0;}";
+  html += ".container{background:white;padding:30px;border-radius:10px;box-shadow:0 2px 10px rgba(0,0,0,0.1);max-width:400px;margin:0 auto;}";
+  html += "h1{color:#4CAF50;}</style></head><body>";
+  html += "<div class='container'>";
+  html += "<h1>✓ Restarting Device</h1>";
+  html += "<p>The device is restarting now...</p>";
+  html += "<p>Please wait about 20 seconds, then <a href='/'>click here</a> to return to the configuration page.</p>";
+  html += "</div></body></html>";
+  
+  server.send(200, "text/html", html);
+  
+  delay(1000); // Give time for response to be sent
+  ESP.restart();
+}
+
 void handleFactoryReset() {
   server.send(200, "text/plain", "Resetting...");
   delay(1000);
@@ -1230,6 +1323,11 @@ void handleStatus() {
   json += "}";
   
   server.send(200, "application/json", json);
+}
+
+void handleFavicon() {
+  // Return a 204 No Content response (tells browser there's no favicon)
+  server.send(204);
 }
 
 void displayScrollText(const char* text, uint16_t color) {

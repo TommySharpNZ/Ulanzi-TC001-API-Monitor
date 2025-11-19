@@ -36,16 +36,21 @@ The TC001 Custom Firmware transforms your Ulanzi TC001 into a self-contained API
 **Why This Over AWTRIX?**
 AWTRIX requires an external server to POST data to the device. This firmware polls APIs directly from the device, making it ideal for portable use on public WiFi networks where you can't run external servers.
 
+## What's New in v1.0.4
+
+- **General Config** - Move display brightness to a general config page.
+- **Reboot** - Able to reboot device from config page.
+- **Tidy Up** - Tidied up the config screens, removed all the dedicated battery information as it was to much info.
+
 ## What's New in v1.0.3
 
 ### 🔋 Battery Monitoring Features
 
 - **Real-time battery monitoring** - Voltage and percentage tracking
-- **Web UI display** - Live battery status with visual indicator
+- **Web UI display** - Live battery status
 - **Button combination** - Hold Button 2 + Button 3 to show battery on display
 - **Low battery warnings** - Audio alerts at 20% (low) and 10% (critical)
 - **Smart voltage curve** - Accurate LiPo battery percentage calculation
-- **Auto-refresh** - Battery status updates every 5 seconds in web UI
 
 ## Hardware Specifications
 
@@ -115,15 +120,12 @@ AWTRIX requires an external server to POST data to the device. This firmware pol
 - ⚙️ Full configuration page
 - 🧪 API connection testing
 - 📊 Status monitoring with battery info
-- 🔋 Live battery status display
 - 🔄 Factory reset option
 - 👁️ Icon preview before saving
 
 #### Battery Management 🔋
 - 📊 Real-time voltage and percentage monitoring
-- 🎨 Color-coded battery display (green/orange/red/cyan)
 - 🔊 Low battery audio alerts (20% and 10%)
-- ⚡ Charging status detection
 - 📱 Web UI with live battery indicator
 - 🎮 Button combination (Button 2 + 3) to show battery
 - 📈 Non-linear voltage curve for accurate LiPo readings
@@ -358,20 +360,6 @@ Battery Voltage Ranges
 - **3.5V** = ~15% (low)
 - **3.0V** = 0% (empty)
 
-#### Battery Status Indicators
-
-**Web UI Display:**
-- 🟢 **Green bar** = Good battery (> 20%)
-- 🟠 **Orange bar** = Low battery (10-20%)
-- 🔴 **Red bar** = Critical battery (< 10%)
-- 🔵 **Cyan animated bar** = Charging
-
-**LED Display Colors:**
-- **Green** = Good battery level
-- **Orange** = Low battery warning
-- **Red** = Critical battery
-- **Cyan** = Currently charging
-
 #### Audio Alerts
 - **Single beep** = Low battery warning (20%) - plays once per boot
 - **Double beep** = Critical battery (10%) - repeats periodically
@@ -381,20 +369,16 @@ Battery Voltage Ranges
 Method 1: Web Interface
 1. Navigate to your TC001's IP address in a browser
 2. Battery status appears at the top with:
-   - Visual battery bar indicator
    - Percentage and voltage display
-   - Charging status
-   - Auto-refresh every 5 seconds
 
 Method 2: Button Combination
 1. **Hold Button 2 + Button 3** together for 0.5 seconds
 2. Battery information displays on the LED matrix for 3 seconds
-3. Shows: `BAT: XX% X.XXV` (and `[CHG]` if charging)
 
 #### Battery Monitoring Configuration
 
 Battery monitoring runs automatically with these settings:
-- **Update interval:** 5 seconds
+- **Update interval:** 10 seconds
 - **Samples per reading:** 10 (averaged for stability)
 - **Low battery threshold:** 20%
 - **Critical threshold:** 10%
@@ -453,7 +437,7 @@ Once configured, the device will:
 ```json
 {
   "OverdueWorkflows": [
-    { "Username": "Binai Prasad", "Overdue": 1, "Today": 0 },
+    { "Username": "Sue Walker", "Overdue": 1, "Today": 0 },
     { "Username": "John Smith", "Overdue": 5, "Today": 2 }
   ]
 }
@@ -461,7 +445,7 @@ Once configured, the device will:
 
 **Configuration:**
 - API Endpoint: `https://workflow.company.com/api/stats`
-- JSON Path: `OverdueWorkflows[Username=Binai Prasad].Overdue`
+- JSON Path: `OverdueWorkflows[Username=Sue Walker].Overdue`
 - Display Prefix: `` (empty)
 - Display Suffix: `` (empty)
 - Icon Data: `[[...]]` (person icon)
@@ -563,27 +547,6 @@ Main components:
 - **Storage** - NVS preferences for configuration
 - **Button Handler** - Physical button controls
 
-### Key Functions
-
-```cpp
-// Battery monitoring
-void updateBatteryStatus()        // Read and calculate battery status
-int calculateBatteryPercentage()  // Convert voltage to percentage
-void scrollBatteryDisplay()       // Show battery on LED display
-void showBatteryOnDisplay()       // Trigger battery display via button
-
-// API and display
-void pollAPI()                    // Make API request and parse response
-String extractJSONValue()         // Navigate JSON path and extract value
-void scrollCurrentValue()         // Update LED display (scroll or static)
-void parseIconData()              // Parse JSON icon array to RGB565
-
-// Configuration
-void loadConfiguration()          // Load settings from NVS
-void saveConfiguration()          // Save settings to NVS
-void handleConfigPage()           // Serve web configuration page
-```
-
 ## Future Enhancements
 
 Planned features for future releases:
@@ -597,12 +560,10 @@ Planned features for future releases:
 - [ ] Time display option
 - [ ] Temperature/weather display
 - [ ] Combination of button press to force refresh of current screen
-- [ ] Historical battery usage graphs
 
 ### Low Priority
 - [ ] OTA (Over-The-Air) firmware updates
 - [ ] Show recent serial log entries in web config UI
-- [ ] Export battery history data
 
 ## Troubleshooting
 
@@ -660,25 +621,6 @@ Planned features for future releases:
 4. Reboot the device (power cycle)
 5. Factory reset and reconfigure if needed
 
-### Brightness Issues
-
-**Symptoms:** Display too bright/dim, or auto brightness not working correctly
-
-**Solutions:**
-1. **Auto mode too bright in dark:** This is expected - the sensor values may need fine-tuning for your environment. Check serial monitor for sensor readings and adjust the ranges in `updateBrightness()` function
-2. **Auto mode not responding:** Verify light sensor isn't physically covered by case or obstructed
-3. **Manual mode not working:** Check that "Auto Brightness" checkbox is unchecked in configuration
-4. **Display too dim:** Increase manual brightness slider value (try 80-150 for normal indoor use)
-5. **Want different brightness curve:** Uncomment debug lines in `updateBrightness()` to see sensor values, then adjust the mapping ranges to suit your environment
-
-**Debug Auto Brightness:**
-To see actual light sensor readings, uncomment these lines in the code:
-```cpp
-Serial.print("Light sensor: ");
-Serial.println(sensorValue);
-```
-Then open Serial Monitor (115200 baud) to view real-time sensor values and corresponding brightness levels.
-
 ### Serial Monitor Debug
 
 Connect USB and open Serial Monitor (115200 baud) to see:
@@ -706,12 +648,10 @@ Connect USB and open Serial Monitor (115200 baud) to see:
 - Update frequency: Every 10 seconds
 - Samples per reading: 10 (averaged)
 - Non-linear voltage curve for LiPo batteries
-- Charging detection via voltage analysis
 
 ### Security Considerations
 - API keys stored in plaintext in NVS
 - Keys only masked in web UI display
-- Consider encryption for highly sensitive deployments
 - Use HTTPS endpoints when possible
 
 ### Network Requirements

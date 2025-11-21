@@ -9,7 +9,7 @@
 #include <Preferences.h>
 
 // Project Details
-String buildNumber = "v1.0.4";
+String buildNumber = "v1.0.5";
 
 // Pin definitions
 #define BUTTON_1 26
@@ -565,46 +565,73 @@ void pollAPI() {
     return;
   }
   
-  HTTPClient http;
-  http.begin(apiEndpoint);
+  const int MAX_RETRIES = 2;
+  const int TIMEOUT_MS = 10000; // 10 second timeout
+  int retryCount = 0;
+  bool success = false;
   
-  if (apiKey.length() > 0) {
-    http.addHeader(apiHeaderName, apiKey);
-  }
-  
-  Serial.println("Polling API: " + apiEndpoint);
-  int httpCode = http.GET();
-  
-  if (httpCode > 0) {
-    if (httpCode == HTTP_CODE_OK) {
-      String payload = http.getString();
-      Serial.println("API Response received (" + String(payload.length()) + " bytes)");
-      
-      String value = extractJSONValue(payload, jsonPath);
-      
-      if (value.length() > 0) {
-        currentValue = displayPrefix + value + displaySuffix;
-        lastError = "";
-        Serial.println("Extracted value: " + value);
-        Serial.println("Display value: " + currentValue);
-        scrollX = MATRIX_WIDTH;
+  while (retryCount <= MAX_RETRIES && !success) {
+    if (retryCount > 0) {
+      Serial.println("Retry attempt " + String(retryCount) + " of " + String(MAX_RETRIES));
+      delay(1000); // Wait 1 second before retry
+    }
+    
+    HTTPClient http;
+    http.begin(apiEndpoint);
+    http.setTimeout(TIMEOUT_MS);
+    
+    if (apiKey.length() > 0) {
+      http.addHeader(apiHeaderName, apiKey);
+    }
+    
+    Serial.println("Polling API: " + apiEndpoint);
+    int httpCode = http.GET();
+    
+    if (httpCode > 0) {
+      if (httpCode == HTTP_CODE_OK) {
+        String payload = http.getString();
+        Serial.println("API Response received (" + String(payload.length()) + " bytes)");
+        
+        String value = extractJSONValue(payload, jsonPath);
+        
+        if (value.length() > 0) {
+          currentValue = displayPrefix + value + displaySuffix;
+          lastError = "";
+          Serial.println("Extracted value: " + value);
+          Serial.println("Display value: " + currentValue);
+          scrollX = MATRIX_WIDTH;
+          success = true;
+        } else {
+          currentValue = "PATH ERROR";
+          lastError = "Could not extract value from JSON path";
+          Serial.println("Error: " + lastError);
+          success = true; // Don't retry for JSON path errors
+        }
       } else {
-        currentValue = "PATH ERROR";
-        lastError = "Could not extract value from JSON path";
-        Serial.println("Error: " + lastError);
+        currentValue = "HTTP " + String(httpCode);
+        lastError = "HTTP error: " + String(httpCode);
+        Serial.println("HTTP error: " + String(httpCode));
+        success = true; // Don't retry for HTTP errors (4xx, 5xx)
       }
     } else {
-      currentValue = "HTTP " + String(httpCode);
-      lastError = "HTTP error: " + String(httpCode);
-      Serial.println("HTTP error: " + String(httpCode));
+      // Network/timeout error - these we should retry
+      String errorMsg = http.errorToString(httpCode);
+      Serial.println("Connection failed: " + errorMsg);
+      
+      if (retryCount == MAX_RETRIES) {
+        // Final attempt failed
+        currentValue = "CONN FAIL";
+        lastError = errorMsg;
+      }
     }
-  } else {
-    currentValue = "CONN FAIL";
-    lastError = http.errorToString(httpCode);
-    Serial.println("Connection failed: " + lastError);
+    
+    http.end();
+    retryCount++;
   }
   
-  http.end();
+  if (!success) {
+    Serial.println("API call failed after " + String(MAX_RETRIES + 1) + " attempts");
+  }
 }
 
 String extractJSONValue(const String& json, const String& path) {
@@ -1136,33 +1163,119 @@ void handleAPIConfigPage() {
   html += "  });";
   html += "}";
   
-  html += "document.getElementById('iconData').addEventListener('input', function() {";
+  html += "let currentColor = [255, 0, 0];";
+  html += "let iconDataArray = [];";
+  html += "let isUpdatingFromPreview = false;";
+  html += "let colorPickerInitialized = false;";
+  
+  html += "function rgbToHex(r, g, b) {";
+  html += "  return '#' + [r, g, b].map(x => {";
+  html += "    const hex = x.toString(16);";
+  html += "    return hex.length === 1 ? '0' + hex : hex;";
+  html += "  }).join('');";
+  html += "}";
+  
+  html += "function hexToRgb(hex) {";
+  html += "  const result = /^#?([a-f\\d]{2})([a-f\\d]{2})([a-f\\d]{2})$/i.exec(hex);";
+  html += "  return result ? [";
+  html += "    parseInt(result[1], 16),";
+  html += "    parseInt(result[2], 16),";
+  html += "    parseInt(result[3], 16)";
+  html += "  ] : [0, 0, 0];";
+  html += "}";
+  
+  html += "function updatePreviewFromJSON() {";
+  html += "  if (isUpdatingFromPreview) return;";
   html += "  try {";
-  html += "    const data = JSON.parse(this.value);";
+  html += "    const data = JSON.parse(document.getElementById('iconData').value);";
   html += "    if (Array.isArray(data) && data.length === 64) {";
-  html += "      let preview = '<div>';";
-  html += "      for (let i = 0; i < 8; i++) {";
-  html += "        for (let j = 0; j < 8; j++) {";
-  html += "          const pixel = data[i * 8 + j];";
-  html += "          if (Array.isArray(pixel) && pixel.length >= 3) {";
-  html += "            const color = 'rgb(' + pixel[0] + ',' + pixel[1] + ',' + pixel[2] + ')';";
-  html += "            preview += '<div class=\"icon-pixel\" style=\"background-color:' + color + '\"></div>';";
-  html += "          }";
-  html += "        }";
-  html += "        preview += '<br>';";
-  html += "      }";
-  html += "      preview += '</div>';";
-  html += "      document.getElementById('iconPreview').innerHTML = preview;";
+  html += "      iconDataArray = data;";
+  html += "      renderPreview();";
   html += "    } else {";
   html += "      document.getElementById('iconPreview').innerHTML = '<p style=\"color:red\">Invalid: Need exactly 64 pixels</p>';";
   html += "    }";
   html += "  } catch(e) {";
-  html += "    document.getElementById('iconPreview').innerHTML = '';";
+  html += "    if (document.getElementById('iconData').value.trim() === '') {";
+  html += "      iconDataArray = Array(64).fill([0, 0, 0]);";
+  html += "      renderPreview();";
+  html += "    } else {";
+  html += "      document.getElementById('iconPreview').innerHTML = '';";
+  html += "    }";
   html += "  }";
-  html += "});";
+  html += "}";
+  
+  html += "function updateJSONFromPreview() {";
+  html += "  isUpdatingFromPreview = true;";
+  html += "  document.getElementById('iconData').value = JSON.stringify(iconDataArray);";
+  html += "  setTimeout(() => { isUpdatingFromPreview = false; }, 10);";
+  html += "}";
+  
+  html += "function updateColorDisplay() {";
+  html += "  const rgbDisplay = document.getElementById('rgbDisplay');";
+  html += "  if (rgbDisplay) {";
+  html += "    rgbDisplay.textContent = 'RGB: ' + currentColor.join(', ');";
+  html += "  }";
+  html += "}";
+  
+  html += "function renderPreview() {";
+  html += "  let preview = '<div style=\"margin-bottom: 10px;\">';";
+  html += "  preview += '<label>Color Picker: </label>';";
+  html += "  preview += '<input type=\"color\" id=\"colorPicker\" value=\"' + rgbToHex(currentColor[0], currentColor[1], currentColor[2]) + '\" style=\"width:60px;height:30px;border:none;cursor:pointer;\">';";
+  html += "  preview += '<span id=\"rgbDisplay\" style=\"margin-left:10px;\">RGB: ' + currentColor.join(', ') + '</span>';";
+  html += "  preview += '<button type=\"button\" onclick=\"clearIcon()\" style=\"margin-left:15px;padding:5px 10px;cursor:pointer;\">Clear All</button>';";
+  html += "  preview += '</div>';";
+  html += "  preview += '<div id=\"pixelGrid\" style=\"display:inline-block;border:2px solid #ccc;\">';";
+  html += "  for (let i = 0; i < 8; i++) {";
+  html += "    for (let j = 0; j < 8; j++) {";
+  html += "      const idx = i * 8 + j;";
+  html += "      const pixel = iconDataArray[idx] || [0, 0, 0];";
+  html += "      const color = 'rgb(' + pixel[0] + ',' + pixel[1] + ',' + pixel[2] + ')';";
+  html += "      preview += '<div class=\"icon-pixel\" id=\"pixel' + idx + '\" onclick=\"paintPixel(' + idx + ')\" style=\"background-color:' + color + ';cursor:pointer;\" title=\"Click to paint\"></div>';";
+  html += "    }";
+  html += "    preview += '<br>';";
+  html += "  }";
+  html += "  preview += '</div>';";
+  html += "  document.getElementById('iconPreview').innerHTML = preview;";
+  html += "  if (!colorPickerInitialized) {";
+  html += "    setupColorPicker();";
+  html += "    colorPickerInitialized = true;";
+  html += "  }";
+  html += "}";
+  
+  html += "function setupColorPicker() {";
+  html += "  const colorPicker = document.getElementById('colorPicker');";
+  html += "  if (colorPicker) {";
+  html += "    colorPicker.addEventListener('input', function(e) {";
+  html += "      currentColor = hexToRgb(e.target.value);";
+  html += "      updateColorDisplay();";
+  html += "    });";
+  html += "  }";
+  html += "}";
+  
+  html += "function paintPixel(index) {";
+  html += "  iconDataArray[index] = [...currentColor];";
+  html += "  const pixelElement = document.getElementById('pixel' + index);";
+  html += "  if (pixelElement) {";
+  html += "    pixelElement.style.backgroundColor = 'rgb(' + currentColor[0] + ',' + currentColor[1] + ',' + currentColor[2] + ')';";
+  html += "  }";
+  html += "  updateJSONFromPreview();";
+  html += "}";
+  
+  html += "function clearIcon() {";
+  html += "  iconDataArray = Array(64).fill([0, 0, 0]);";
+  html += "  for (let i = 0; i < 64; i++) {";
+  html += "    const pixelElement = document.getElementById('pixel' + i);";
+  html += "    if (pixelElement) {";
+  html += "      pixelElement.style.backgroundColor = 'rgb(0, 0, 0)';";
+  html += "    }";
+  html += "  }";
+  html += "  updateJSONFromPreview();";
+  html += "}";
+  
+  html += "document.getElementById('iconData').addEventListener('input', updatePreviewFromJSON);";
   
   html += "window.addEventListener('load', function() {";
-  html += "  document.getElementById('iconData').dispatchEvent(new Event('input'));";
+  html += "  updatePreviewFromJSON();";
   html += "});";
   
   html += "</script>";
@@ -1182,13 +1295,9 @@ void handleSaveAPIConfig() {
   pollingInterval = server.arg("interval").toInt();
   scrollEnabled = server.hasArg("scroll");
   iconData = server.arg("iconData");
-  autoBrightness = server.hasArg("autoBrightness");
-  manualBrightness = server.arg("brightness").toInt();
   
   if (pollingInterval < 5) pollingInterval = 5;
   if (pollingInterval > 3600) pollingInterval = 3600;
-  if (manualBrightness < 10) manualBrightness = 10;
-  if (manualBrightness > 255) manualBrightness = 255;
   
   if (iconData.length() > 0) {
     parseIconData(iconData);
@@ -1199,12 +1308,6 @@ void handleSaveAPIConfig() {
   saveAPIConfiguration();
   
   apiConfigured = (apiEndpoint.length() > 0 && jsonPath.length() > 0);
-  
-  if (autoBrightness) {
-    updateBrightness();
-  } else {
-    matrix.setBrightness(manualBrightness);
-  }
   
   if (apiConfigured) {
     pollAPI();

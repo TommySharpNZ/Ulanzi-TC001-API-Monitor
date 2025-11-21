@@ -6,7 +6,6 @@ Custom firmware for the Ulanzi TC001 pixel display clock that enables portable A
 
 ## Table of Contents
 - [Overview](#overview)
-- [What's New in v1.0.3](#whats-new-in-v103)
 - [Hardware Specifications](#hardware-specifications)
 - [Features](#features)
 - [Requirements](#requirements)
@@ -35,6 +34,11 @@ The TC001 Custom Firmware transforms your Ulanzi TC001 into a self-contained API
 
 **Why This Over AWTRIX?**
 AWTRIX requires an external server to POST data to the device. This firmware polls APIs directly from the device, making it ideal for portable use on public WiFi networks where you can't run external servers.
+
+## What's New in v1.0.5
+
+- **Interactive Icon Editor** - Added color picker for selecting paint colors, Made icon preview grid clickable to paint individual pixels, Added "Clear All" button to reset icon, Implemented two-way sync between JSON array and visual editor.
+- **API Retry Logic** - Added 10 second timeout to API requests, Implemented automatic retry (up to 2 attempts) for network/timeout errors.
 
 ## What's New in v1.0.4
 
@@ -113,7 +117,7 @@ AWTRIX requires an external server to POST data to the device. This firmware pol
 - 🎨 8x8 pixel RGB icons
 - 🔄 Icons scroll with text
 - 📋 JSON array format: `[[r,g,b],[r,g,b],...]`
-- 👁️ Live preview in configuration interface
+- 👁️ Live design and preview in configuration interface
 - 💾 Stored locally (no external dependencies)
 
 #### Web Interface
@@ -126,7 +130,6 @@ AWTRIX requires an external server to POST data to the device. This firmware pol
 #### Battery Management 🔋
 - 📊 Real-time voltage and percentage monitoring
 - 🔊 Low battery audio alerts (20% and 10%)
-- 📱 Web UI with live battery indicator
 - 🎮 Button combination (Button 2 + 3) to show battery
 - 📈 Non-linear voltage curve for accurate LiPo readings
 - 🔔 Critical battery warnings with double beep

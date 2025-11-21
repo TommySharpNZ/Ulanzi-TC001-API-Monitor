@@ -35,6 +35,10 @@ The TC001 Custom Firmware transforms your Ulanzi TC001 into a self-contained API
 **Why This Over AWTRIX?**
 AWTRIX requires an external server to POST data to the device. This firmware polls APIs directly from the device, making it ideal for portable use on public WiFi networks where you can't run external servers.
 
+## What's New in v1.0.6
+
+- **MAC Address Fix** - Was not properly retrieving MAC address to generate unique device name
+
 ## What's New in v1.0.5
 
 - **Interactive Icon Editor** - Added color picker for selecting paint colors, Made icon preview grid clickable to paint individual pixels, Added "Clear All" button to reset icon, Implemented two-way sync between JSON array and visual editor.

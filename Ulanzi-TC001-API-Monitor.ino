@@ -9,7 +9,7 @@
 #include <Preferences.h>
 
 // Project Details
-String buildNumber = "v1.0.5";
+String buildNumber = "v1.0.6";
 
 // Pin definitions
 #define BUTTON_1 26
@@ -121,12 +121,19 @@ void setup() {
   Serial.begin(115200);
   Serial.println("\n\nTC001 Custom Firmware " + buildNumber + " Starting...");
   
+  // Initialize WiFi to get proper MAC address
+  WiFi.mode(WIFI_STA);
+  delay(100); // Short delay to let WiFi initialize
+  
   // Get MAC address and create unique device ID
   uint8_t mac[6];
   WiFi.macAddress(mac);
   deviceID = String(mac[3], HEX) + String(mac[4], HEX) + String(mac[5], HEX);
   deviceID.toUpperCase();
   deviceName = "TC001-Display-" + deviceID;
+  
+  // Set hostname for router identification
+  WiFi.setHostname(deviceName.c_str());
   
   Serial.print("Device Name: ");
   Serial.println(deviceName);
@@ -1382,7 +1389,7 @@ void handleRestart() {
   html += ".container{background:white;padding:30px;border-radius:10px;box-shadow:0 2px 10px rgba(0,0,0,0.1);max-width:400px;margin:0 auto;}";
   html += "h1{color:#4CAF50;}</style></head><body>";
   html += "<div class='container'>";
-  html += "<h1>✓ Restarting Device</h1>";
+  html += "<h1>Restarting Device</h1>";
   html += "<p>The device is restarting now...</p>";
   html += "<p>Please wait about 20 seconds, then <a href='/'>click here</a> to return to the configuration page.</p>";
   html += "</div></body></html>";

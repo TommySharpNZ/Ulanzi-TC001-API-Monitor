@@ -101,14 +101,6 @@
       box-shadow: 0 6px 12px rgba(0, 0, 0, 0.15);
     }
 
-    esp-web-install-button button[style*="background: #2196F3"] {
-      background: #2196F3 !important;
-    }
-
-    esp-web-install-button button[style*="background: #2196F3"]:hover {
-      background: #1976D2 !important;
-    }
-
     .requirements {
       background: #fff3cd;
       border-left: 4px solid #ffc107;
@@ -226,16 +218,21 @@
         </ul>
       </div>
 
-      <div class="info-box" style="background: #e3f2fd; border-color: #2196F3;">
-        <strong style="color: #1565c0;">💡 Erase Device Option</strong>
-        <p style="color: #1565c0;">
-          When you click install, you'll be asked whether to erase the device:<br><br>
-          <strong>✅ Keep "Erase device" UNCHECKED</strong> - Updates firmware while preserving WiFi and API settings (recommended for updates)<br><br>
-          <strong>⚠️ CHECK "Erase device"</strong> - Completely wipes and reinstalls everything (required for first install or if device won't boot)
+      <div class="info-box" style="background: #fff3cd; border-color: #ffc107;">
+        <strong style="color: #856404;">⚠️ Important: This Will Erase All Settings</strong>
+        <p style="color: #856404;">
+          This installer performs a complete firmware installation and will erase all existing configuration including WiFi credentials and API settings. You will need to reconfigure your device after installation.
         </p>
       </div>
 
-      <esp-web-install-button manifest="./manifest.json">
+      <div class="info-box" style="background: #e3f2fd; border-color: #2196F3;">
+        <strong style="color: #1565c0;">💡 For Firmware Updates</strong>
+        <p style="color: #1565c0;">
+          A future update will add the ability to backup and restore your settings. For now, please note your configuration before installing.
+        </p>
+      </div>
+
+      <esp-web-install-button manifest="./manifest.json" erase-first>
         <button slot="activate">Install Firmware</button>
         <span slot="unsupported">
           ⚠️ Your browser doesn't support Web Serial API. Please use Google Chrome or Microsoft Edge.

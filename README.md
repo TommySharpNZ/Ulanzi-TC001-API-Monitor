@@ -12,6 +12,7 @@ Custom firmware for the Ulanzi TC001 pixel display clock that enables portable A
 - [Installation](#installation)
 - [Configuration](#configuration)
 - [Usage](#usage)
+- [Backup & Restore](#backup--restore)
 - [Battery Monitoring](#battery-monitoring)
 - [API Requirements](#api-requirements)
 - [Button Controls](#button-controls)
@@ -34,6 +35,11 @@ This firmware transforms your Ulanzi TC001 into a self-contained API monitoring 
 
 **Why This Over AWTRIX?**
 AWTRIX requires an external server to POST data to the device. This firmware polls APIs directly from the device, making it ideal for portable use on public WiFi networks where you can't run external servers.
+
+## What's New in v1.0.8
+
+- **Backup & Restore** - Save and restore your device configuration via the web interface
+- **Web Installer** - Implemented easy web installer to load firmware onto devices
 
 ## What's New in v1.0.7
 
@@ -545,6 +551,82 @@ Once configured, the device will:
 - Manual Brightness: N/A (auto mode)
 
 **Result:** "BTC: $43250.5432" scrolls continuously, updates every 2 minutes, brightness adapts to lighting conditions.
+
+## Backup & Restore
+
+The firmware includes a backup and restore feature that allows you to save your device configuration and restore it later. This is useful for:
+
+- **Firmware updates** - Save settings before updating, restore after
+- **Device migration** - Transfer settings to a new TC001 device
+- **Configuration backup** - Keep a safe copy of your working setup
+
+### Accessing Backup & Restore
+
+1. Log in to the web interface at your device's IP address
+2. Click the **Backup / Restore** button on the home page
+
+### Creating a Backup
+
+1. Navigate to the Backup & Restore page
+2. Click **Download Backup**
+3. A JSON file will be downloaded to your computer with the naming format: `tc001-backup-YYYY-MM-DD.json`
+
+**What's Included in Backups:**
+- API endpoint URL and header configuration
+- JSON path settings
+- Display prefix and suffix
+- Polling interval
+- Scroll mode settings
+- Icon data (8x8 pixel design)
+- Brightness preferences (auto/manual mode and level)
+
+**What's NOT Included (for security):**
+- WiFi credentials (SSID and password)
+- Admin password
+- API keys/authentication tokens
+
+### Restoring from Backup
+
+1. Navigate to the Backup & Restore page
+2. Click **Choose File** and select your backup JSON file
+3. Click **Upload & Restore**
+4. If there's a version mismatch between the backup and current firmware, you'll be prompted to confirm
+5. The device will automatically restart to apply the restored settings
+
+**Important Notes:**
+- After restoring, you'll need to re-enter your API key (not stored in backups for security)
+- WiFi settings are preserved separately and won't be affected by restore
+- The device restarts automatically after a successful restore
+
+### Backup File Format
+
+Backup files are stored in JSON format and can be viewed/edited in any text editor:
+
+```json
+{
+  "version": "v1.0.8",
+  "device_id": "XXXXXX",
+  "backup_date": "2024-01-15T10:30:00.000Z",
+  "api_endpoint": "https://api.example.com/data",
+  "api_header_name": "APIKey",
+  "json_path": "data.count",
+  "display_prefix": "Count: ",
+  "display_suffix": "",
+  "polling_interval": 60,
+  "scroll_enabled": true,
+  "icon_data": "[[255,0,0],...]",
+  "auto_brightness": true,
+  "manual_brightness": 40
+}
+```
+
+### Version Compatibility
+
+When restoring a backup from a different firmware version:
+- A warning dialog will appear showing both versions
+- You can choose to proceed or cancel
+- Most settings are forward/backward compatible
+- New features in newer firmware will use default values if not present in the backup
 
 ## API Requirements
 

@@ -77,24 +77,6 @@ cp C:/Users/YourUsername/AppData/Local/Arduino15/packages/esp32/hardware/esp32/2
 
 Update these files with the new version number:
 
-**docs/manifest.json:**
-```json
-{
-  "name": "TC001 API Monitor",
-  "version": "1.0.8",   ← Update this
-  ...
-}
-```
-
-**docs/index.html:**
-```html
-<title>TC001 API Monitor - Web Installer</title>
-...
-<p class="version">Firmware Version 1.0.8</p>   ← Update this
-...
-<button slot="activate">Install Firmware v1.0.8</button>   ← Update this
-```
-
 **README.md:**
 - Add new "What's New in vX.X.X" section at the top
 - Update version in web installer link text if needed
@@ -115,10 +97,10 @@ python -m http.server 8000
 
 ```bash
 git add .
-git commit -m "Release v1.0.8 - Description of changes"
-git tag v1.0.8
+git commit -m "Release v1.0.x - Description of changes"
+git tag v1.0.x
 git push origin main
-git push origin v1.0.8
+git push origin v1.0.x
 ```
 
 ### 8. Verify GitHub Pages
@@ -188,8 +170,6 @@ Before releasing:
 - [ ] Version updated in .ino file
 - [ ] Code compiled without errors
 - [ ] All 4 binary files copied to docs/firmware/
-- [ ] Version updated in manifest.json
-- [ ] Version updated in index.html (2 places)
 - [ ] README.md updated with changes
 - [ ] Tested locally with real device
 - [ ] Settings preserved after update

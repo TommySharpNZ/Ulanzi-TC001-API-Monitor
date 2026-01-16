@@ -9,7 +9,7 @@
 #include <Preferences.h>
 
 // Project Details
-String buildNumber = "v1.0.7";
+String buildNumber = "v1.0.8";
 
 // Pin definitions
 #define BUTTON_1 26
@@ -1059,6 +1059,255 @@ bool requireAuth() {
   return true;
 }
 
+// ============================================
+// Backup and Restore Functions
+// ============================================
+
+void handleBackupRestorePage() {
+  if (!requireAuth()) return;
+
+  String html = "<!DOCTYPE html><html><head>";
+  html += "<meta name='viewport' content='width=device-width, initial-scale=1'>";
+  html += "<title>Backup & Restore - " + deviceName + "</title>";
+  html += "<style>";
+  html += "body { font-family: Arial, sans-serif; margin: 20px; background: #f0f0f0; }";
+  html += ".container { max-width: 700px; margin: 0 auto; background: white; padding: 20px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }";
+  html += "h1 { color: #333; border-bottom: 2px solid #4CAF50; padding-bottom: 10px; }";
+  html += "h2 { color: #555; margin-top: 25px; }";
+  html += ".info-box { background: #e3f2fd; border-left: 4px solid #2196F3; padding: 15px; margin: 15px 0; border-radius: 5px; }";
+  html += ".warning-box { background: #fff3cd; border-left: 4px solid #ffc107; padding: 15px; margin: 15px 0; border-radius: 5px; }";
+  html += ".button { display: inline-block; background: #4CAF50; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; margin: 5px; border: none; cursor: pointer; font-size: 16px; }";
+  html += ".button:hover { background: #45a049; }";
+  html += ".button.secondary { background: #008CBA; }";
+  html += ".button.secondary:hover { background: #007399; }";
+  html += ".status { padding: 15px; border-radius: 5px; margin: 15px 0; display: none; }";
+  html += ".status.success { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; display: block; }";
+  html += ".status.error { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; display: block; }";
+  html += "ul { line-height: 1.8; }";
+  html += "input[type='file'] { padding: 10px; margin: 10px 0; }";
+  html += ".section { margin: 30px 0; padding: 20px; background: #f9f9f9; border-radius: 8px; }";
+  html += "</style>";
+  html += "</head><body>";
+
+  html += "<div class='container'>";
+  html += "<h1>Backup & Restore Configuration</h1>";
+
+  html += "<div class='info-box'>";
+  html += "<strong>About Backup & Restore</strong><br>";
+  html += "This feature allows you to save and restore your device configuration. ";
+  html += "Perfect for updating firmware or transferring settings between devices.";
+  html += "</div>";
+
+  // Backup Section
+  html += "<div class='section'>";
+  html += "<h2>Backup Configuration</h2>";
+  html += "<p>Create a backup file containing your current settings:</p>";
+  html += "<ul>";
+  html += "<li>API endpoint URL and configuration</li>";
+  html += "<li>Display settings (prefix, suffix, polling interval)</li>";
+  html += "<li>Icon data and scroll settings</li>";
+  html += "<li>Brightness preferences</li>";
+  html += "</ul>";
+  html += "<div class='warning-box'>";
+  html += "<strong>Note:</strong> For security reasons, the following are NOT included in backups:";
+  html += "<ul style='margin: 5px 0;'>";
+  html += "<li>WiFi credentials (SSID and password)</li>";
+  html += "<li>Admin password</li>";
+  html += "<li>API keys</li>";
+  html += "</ul>";
+  html += "</div>";
+  html += "<button onclick='downloadBackup()' class='button'>Download Backup</button>";
+  html += "</div>";
+
+  // Restore Section
+  html += "<div class='section'>";
+  html += "<h2>Restore Configuration</h2>";
+  html += "<p>Upload a previously saved backup file to restore your settings.</p>";
+  html += "<div class='warning-box'>";
+  html += "<strong>Important:</strong> The device will automatically restart after restoring to apply the new settings.";
+  html += "</div>";
+  html += "<form id='restoreForm' enctype='multipart/form-data'>";
+  html += "<input type='file' id='backupFile' accept='.json' required>";
+  html += "<button type='submit' class='button secondary'>Upload & Restore</button>";
+  html += "</form>";
+  html += "<div id='restoreStatus' class='status'></div>";
+  html += "</div>";
+
+  html += "<button onclick='location.href=\"/\"' class='button secondary'>Back to Home</button>";
+
+  html += "</div>";
+
+  // JavaScript
+  html += "<script>";
+
+  // Download backup function
+  html += "function downloadBackup() {";
+  html += "  console.log('Download backup button clicked');";
+  html += "  fetch('/backup/download')";
+  html += "    .then(response => {";
+  html += "      console.log('Response received:', response.status);";
+  html += "      if (!response.ok) {";
+  html += "        throw new Error('HTTP ' + response.status);";
+  html += "      }";
+  html += "      return response.json();";
+  html += "    })";
+  html += "    .then(data => {";
+  html += "      console.log('Data received:', data);";
+  html += "      data.backup_date = new Date().toISOString();";
+  html += "      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });";
+  html += "      const url = URL.createObjectURL(blob);";
+  html += "      const a = document.createElement('a');";
+  html += "      a.href = url;";
+  html += "      a.download = 'tc001-backup-' + new Date().toISOString().split('T')[0] + '.json';";
+  html += "      document.body.appendChild(a);";
+  html += "      a.click();";
+  html += "      document.body.removeChild(a);";
+  html += "      URL.revokeObjectURL(url);";
+  html += "      console.log('Download initiated');";
+  html += "    })";
+  html += "    .catch(err => {";
+  html += "      console.error('Error:', err);";
+  html += "      alert('Error creating backup: ' + err.message);";
+  html += "    });";
+  html += "}";
+
+  // Restore form submission
+  html += "document.getElementById('restoreForm').addEventListener('submit', function(e) {";
+  html += "  e.preventDefault();";
+  html += "  const fileInput = document.getElementById('backupFile');";
+  html += "  const file = fileInput.files[0];";
+  html += "  if (!file) {";
+  html += "    alert('Please select a backup file');";
+  html += "    return;";
+  html += "  }";
+  html += "  const reader = new FileReader();";
+  html += "  reader.onload = function(e) {";
+  html += "    try {";
+  html += "      const config = JSON.parse(e.target.result);";
+  html += "      const currentVersion = '" + buildNumber + "';";
+  html += "      const backupVersion = config.version || 'unknown';";
+  html += "      if (backupVersion !== currentVersion) {";
+  html += "        const message = 'Version mismatch detected:\\\\n\\\\n' +";
+  html += "                       'Backup version: ' + backupVersion + '\\\\n' +";
+  html += "                       'Current firmware: ' + currentVersion + '\\\\n\\\\n' +";
+  html += "                       'Settings may not be fully compatible. Continue anyway?';";
+  html += "        if (!confirm(message)) {";
+  html += "          return;";
+  html += "        }";
+  html += "      }";
+  html += "      fetch('/backup/restore', {";
+  html += "        method: 'POST',";
+  html += "        headers: { 'Content-Type': 'application/json' },";
+  html += "        body: JSON.stringify(config)";
+  html += "      })";
+  html += "      .then(response => response.json())";
+  html += "      .then(data => {";
+  html += "        if (data.success) {";
+  html += "          document.getElementById('restoreStatus').className = 'status success';";
+  html += "          document.getElementById('restoreStatus').innerHTML = '<strong>Success!</strong><br>' + data.message + '<br><br>Device will restart in 3 seconds...';";
+  html += "          setTimeout(() => { window.location.href = '/'; }, 3000);";
+  html += "        } else {";
+  html += "          document.getElementById('restoreStatus').className = 'status error';";
+  html += "          document.getElementById('restoreStatus').innerHTML = '<strong>Error!</strong><br>' + data.message;";
+  html += "        }";
+  html += "      })";
+  html += "      .catch(err => {";
+  html += "        document.getElementById('restoreStatus').className = 'status error';";
+  html += "        document.getElementById('restoreStatus').innerHTML = '<strong>Error!</strong><br>Failed to restore: ' + err;";
+  html += "      });";
+  html += "    } catch(err) {";
+  html += "      alert('Invalid backup file format: ' + err);";
+  html += "    }";
+  html += "  };";
+  html += "  reader.readAsText(file);";
+  html += "});";
+
+  html += "</script>";
+  html += "</body></html>";
+
+  server.send(200, "text/html", html);
+}
+
+void handleBackupDownload() {
+  if (!requireAuth()) return;
+
+  // Create JSON backup (excluding sensitive data)
+  DynamicJsonDocument doc(2048);
+
+  doc["version"] = buildNumber;
+  doc["device_id"] = deviceID;
+  doc["backup_date"] = ""; // Client will set this
+
+  // API Configuration (excluding API key for security)
+  doc["api_endpoint"] = apiEndpoint;
+  doc["api_header_name"] = apiHeaderName;
+  doc["json_path"] = jsonPath;
+  doc["display_prefix"] = displayPrefix;
+  doc["display_suffix"] = displaySuffix;
+  doc["polling_interval"] = pollingInterval;
+
+  // Display Settings
+  doc["scroll_enabled"] = scrollEnabled;
+  doc["icon_data"] = iconData;
+  doc["auto_brightness"] = autoBrightness;
+  doc["manual_brightness"] = manualBrightness;
+
+  String output;
+  serializeJson(doc, output);
+
+  server.send(200, "application/json", output);
+  Serial.println("Backup created and downloaded");
+}
+
+void handleBackupRestore() {
+  if (!requireAuth()) return;
+
+  // Parse the JSON body
+  DynamicJsonDocument doc(2048);
+  DeserializationError error = deserializeJson(doc, server.arg("plain"));
+
+  if (error) {
+    String response = "{\"success\":false,\"message\":\"Invalid JSON format\"}";
+    server.send(400, "application/json", response);
+    Serial.println("Restore failed: Invalid JSON");
+    return;
+  }
+
+  // Restore configuration
+  if (doc.containsKey("api_endpoint")) apiEndpoint = doc["api_endpoint"].as<String>();
+  if (doc.containsKey("api_header_name")) apiHeaderName = doc["api_header_name"].as<String>();
+  if (doc.containsKey("json_path")) jsonPath = doc["json_path"].as<String>();
+  if (doc.containsKey("display_prefix")) displayPrefix = doc["display_prefix"].as<String>();
+  if (doc.containsKey("display_suffix")) displaySuffix = doc["display_suffix"].as<String>();
+  if (doc.containsKey("polling_interval")) pollingInterval = doc["polling_interval"];
+  if (doc.containsKey("scroll_enabled")) scrollEnabled = doc["scroll_enabled"];
+  if (doc.containsKey("icon_data")) {
+    iconData = doc["icon_data"].as<String>();
+    if (iconData.length() > 0) {
+      parseIconData(iconData);
+    } else {
+      iconEnabled = false;
+    }
+  }
+  if (doc.containsKey("auto_brightness")) autoBrightness = doc["auto_brightness"];
+  if (doc.containsKey("manual_brightness")) manualBrightness = doc["manual_brightness"];
+
+  // Save to preferences
+  saveAPIConfiguration();
+
+  // Update API configured flag
+  apiConfigured = (apiEndpoint.length() > 0 && jsonPath.length() > 0);
+
+  String response = "{\"success\":true,\"message\":\"Configuration restored successfully\"}";
+  server.send(200, "application/json", response);
+
+  Serial.println("Configuration restored from backup");
+
+  // Restart device after a short delay
+  delay(1000);
+  ESP.restart();
+}
+
 void setupWebServer() {
   // Public routes (no auth required)
   server.on("/login", HTTP_GET, handleLogin);
@@ -1073,6 +1322,9 @@ void setupWebServer() {
   server.on("/config/api/save", HTTP_POST, handleSaveAPIConfig);
   server.on("/config/general", handleGeneralConfig);
   server.on("/config/general/save", HTTP_POST, handleSaveGeneralConfig);
+  server.on("/backup", handleBackupRestorePage);
+  server.on("/backup/download", handleBackupDownload);
+  server.on("/backup/restore", HTTP_POST, handleBackupRestore);
   server.on("/test", handleTestAPI);
   server.on("/reset", handleFactoryReset);
   server.on("/restart", handleRestart);
@@ -1141,6 +1393,7 @@ void handleRoot() {
   html += "<h2>Actions</h2>";
   html += "<button onclick='location.href=\"/config/general\"' class='button'>Config</button>";
   html += "<button onclick='location.href=\"/config/api\"' class='button'>Configure API</button>";
+  html += "<button onclick='location.href=\"/backup\"' class='button secondary'>Backup / Restore</button>";
   html += "<button onclick='location.href=\"/status\"' class='button secondary'>View JSON Status</button>";
   html += "<button onclick='if(confirm(\"Restart Device?\")) location.href=\"/restart\"' class='button secondary'>Restart</button>";
   html += "<button onclick='if(confirm(\"Reset all settings?\")) location.href=\"/reset\"' class='button danger'>Factory Reset</button>";

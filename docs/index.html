@@ -232,7 +232,7 @@
       </div>
 
       <esp-web-install-button manifest="./manifest-update.json">
-        <button slot="activate" style="background: #2196F3;">Update Firmware Only</button>
+        <button slot="activate" style="background: #2196F3;">Update Firmware (Keep Settings)</button>
         <span slot="unsupported">
           ⚠️ Your browser doesn't support Web Serial API. Please use Google Chrome or Microsoft Edge.
         </span>
@@ -242,7 +242,10 @@
       </esp-web-install-button>
 
       <p style="color: #666; font-size: 0.9em; margin: 10px 0;">
-        ✅ Updates firmware only - preserves WiFi credentials and API settings
+        ✅ Updates bootloader and firmware - attempts to preserve WiFi and settings
+      </p>
+      <p style="color: #ff9800; font-size: 0.85em; margin: 10px 0;">
+        ⚠️ If update fails or device won't boot, use "Clean Install" below
       </p>
 
       <div style="margin: 20px 0; border-top: 1px solid #ddd; padding-top: 20px;">

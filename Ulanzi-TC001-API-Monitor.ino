@@ -9,7 +9,7 @@
 #include <Preferences.h>
 
 // Project Details
-String buildNumber = "v1.0.6";
+String buildNumber = "v1.0.7";
 
 // Pin definitions
 #define BUTTON_1 26
@@ -71,7 +71,7 @@ const int brightnessUpdateInterval = 100; // Update brightness every 100ms
 float batteryVoltage = 0.0;
 int batteryPercentage = 0;
 unsigned long lastBatteryUpdate = 0;
-const unsigned long batteryUpdateInterval = 10000; // Update battery every 10 seconds
+const unsigned long batteryUpdateInterval = 60000; // Update battery every 60 seconds
 bool showBatteryRequested = false;
 unsigned long batteryDisplayTime = 0;
 const unsigned long batteryDisplayDuration = 3000; // Show battery for 3 seconds
@@ -87,12 +87,25 @@ String lastError = "";
 unsigned long lastAPICall = 0;
 bool apiConfigured = false;
 
-// Button states
-bool button1Pressed = false;
-bool button2Pressed = false;
-bool button3Pressed = false;
-unsigned long buttonPressTime = 0;
-unsigned long button23PressTime = 0; // For Button 2 + 3 combination
+// Authentication
+String adminPassword = "ulanzitc001"; // Default password
+bool isAuthenticated = false;
+unsigned long authTimestamp = 0;
+const unsigned long authTimeout = 1800000; // 30 minutes in milliseconds
+
+// Button state tracking
+enum ButtonCombo {
+  COMBO_NONE,
+  COMBO_BTN1,
+  COMBO_BTN2,
+  COMBO_BTN3,
+  COMBO_BTN23,
+  COMBO_BTN123
+};
+
+ButtonCombo currentCombo = COMBO_NONE;
+unsigned long comboPressStartTime = 0;
+bool comboActionExecuted = false;
 
 // Scrolling text variables
 int16_t scrollX = MATRIX_WIDTH;
@@ -414,7 +427,8 @@ void loadConfiguration() {
   iconData = preferences.getString("iconData", "");
   autoBrightness = preferences.getBool("autoBrightness", false);
   manualBrightness = preferences.getInt("brightness", 40);
-  
+  adminPassword = preferences.getString("adminPassword", "ulanzitc001");
+
   preferences.end();
   
   apiConfigured = (apiEndpoint.length() > 0 && jsonPath.length() > 0);
@@ -452,7 +466,7 @@ void loadConfiguration() {
 
 void saveAPIConfiguration() {
   preferences.begin("tc001", false);
-  
+
   preferences.putString("apiUrl", apiEndpoint);
   preferences.putString("apiKey", apiKey);
   preferences.putString("apiHeader", apiHeaderName);
@@ -464,10 +478,59 @@ void saveAPIConfiguration() {
   preferences.putString("iconData", iconData);
   preferences.putBool("autoBrightness", autoBrightness);
   preferences.putInt("brightness", manualBrightness);
-  
+
   preferences.end();
-  
+
   Serial.println("Configuration saved");
+}
+
+// HTML escape function to prevent HTML injection and attribute breaking
+String htmlEscape(const String& str) {
+  String escaped = str;
+  escaped.replace("&", "&amp;");
+  escaped.replace("\"", "&quot;");
+  escaped.replace("'", "&#39;");
+  escaped.replace("<", "&lt;");
+  escaped.replace(">", "&gt;");
+  return escaped;
+}
+
+// URL encode function - encodes query parameters in URLs
+String urlEncode(const String& url) {
+  // Find the query string start (after ?)
+  int queryStart = url.indexOf('?');
+  if (queryStart == -1) {
+    // No query string, return as-is
+    return url;
+  }
+
+  // Split into base URL and query string
+  String baseUrl = url.substring(0, queryStart + 1);
+  String queryString = url.substring(queryStart + 1);
+
+  // Encode the query string
+  String encoded = "";
+  for (unsigned int i = 0; i < queryString.length(); i++) {
+    char c = queryString.charAt(i);
+
+    // Characters that should NOT be encoded in query strings
+    if (isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~' ||
+        c == '=' || c == '&') {
+      // These are safe or structural characters
+      encoded += c;
+    } else if (c == ' ') {
+      // Encode space as %20
+      encoded += "%20";
+    } else {
+      // Encode other characters as %XX
+      encoded += '%';
+      char hex[3];
+      sprintf(hex, "%02X", c);
+      encoded += hex;
+    }
+  }
+
+  return baseUrl + encoded;
 }
 
 void checkButtons() {
@@ -475,43 +538,89 @@ void checkButtons() {
   bool btn1 = (digitalRead(BUTTON_1) == LOW);
   bool btn2 = (digitalRead(BUTTON_2) == LOW);
   bool btn3 = (digitalRead(BUTTON_3) == LOW);
-  
-  // Check for Button 2 + Button 3 combination to show battery
-  if (btn2 && btn3) {
-    if (!button2Pressed || !button3Pressed) {
-      // Just pressed
-      button23PressTime = millis();
-      button2Pressed = true;
-      button3Pressed = true;
-    } else if (millis() - button23PressTime > 500) {
-      // Held for 500ms - show battery
-      showBatteryOnDisplay();
-      // Wait for release
-      while (digitalRead(BUTTON_2) == LOW || digitalRead(BUTTON_3) == LOW) {
-        delay(50);
-      }
-      button2Pressed = false;
-      button3Pressed = false;
-    }
-    return; // Don't check other button combinations
-  } else {
-    button2Pressed = false;
-    button3Pressed = false;
-  }
-  
-  // Check for factory reset (all 3 buttons)
+
+  // Determine which combination is currently pressed (priority: most buttons first)
+  ButtonCombo pressedCombo = COMBO_NONE;
   if (btn1 && btn2 && btn3) {
-    if (!button1Pressed) {
-      buttonPressTime = millis();
-      button1Pressed = true;
-    }
-    
-    if (millis() - buttonPressTime > 3000) {
-      performFactoryReset();
-      button1Pressed = false;
+    pressedCombo = COMBO_BTN123;
+  } else if (btn2 && btn3) {
+    pressedCombo = COMBO_BTN23;
+  } else if (btn1) {
+    pressedCombo = COMBO_BTN1;
+  } else if (btn2) {
+    pressedCombo = COMBO_BTN2;
+  } else if (btn3) {
+    pressedCombo = COMBO_BTN3;
+  }
+
+  // Handle state transitions
+  if (pressedCombo != COMBO_NONE) {
+    // Buttons are pressed
+    if (currentCombo == COMBO_NONE) {
+      // New press started
+      currentCombo = pressedCombo;
+      comboPressStartTime = millis();
+      comboActionExecuted = false;
+      Serial.println("Button press detected: " + String(pressedCombo));
+    } else if (currentCombo != pressedCombo) {
+      // Combination changed (e.g., started with btn2, then pressed btn3 too)
+      currentCombo = pressedCombo;
+      comboPressStartTime = millis();
+      comboActionExecuted = false;
+      Serial.println("Button combo changed to: " + String(pressedCombo));
+    } else {
+      // Same combo still held - check for long press actions
+      unsigned long holdTime = millis() - comboPressStartTime;
+
+      if (!comboActionExecuted) {
+        switch (currentCombo) {
+          case COMBO_BTN123:
+            // All 3 buttons - Factory reset after 3 seconds
+            if (holdTime >= 3000) {
+              Serial.println("Factory reset triggered (3s hold)");
+              performFactoryReset();
+              comboActionExecuted = true;
+            }
+            break;
+
+          case COMBO_BTN23:
+            // Button 2 + 3 - Show battery after 500ms
+            if (holdTime >= 500) {
+              Serial.println("Battery display triggered (0.5s hold)");
+              showBatteryOnDisplay();
+              comboActionExecuted = true;
+            }
+            break;
+
+          case COMBO_BTN2:
+            // Button 2 solo - Manual API refresh after 1 second
+            if (holdTime >= 1000) {
+              Serial.println("Manual API refresh triggered (1s hold)");
+              pollAPI();
+              lastAPICall = millis();
+              comboActionExecuted = true;
+            }
+            break;
+
+          default:
+            // Other combos not yet implemented
+            break;
+        }
+      }
     }
   } else {
-    button1Pressed = false;
+    // No buttons pressed - handle release events if needed
+    if (currentCombo != COMBO_NONE) {
+      unsigned long holdTime = millis() - comboPressStartTime;
+      Serial.println("Button released after " + String(holdTime) + "ms");
+
+      // Handle short press actions here if needed
+      // For example, if btn2 was released before 1 second, could do something else
+
+      // Reset state
+      currentCombo = COMBO_NONE;
+      comboActionExecuted = false;
+    }
   }
 }
 
@@ -582,16 +691,22 @@ void pollAPI() {
       Serial.println("Retry attempt " + String(retryCount) + " of " + String(MAX_RETRIES));
       delay(1000); // Wait 1 second before retry
     }
-    
+
+    // URL encode the endpoint to handle special characters in query parameters
+    String encodedUrl = urlEncode(apiEndpoint);
+
     HTTPClient http;
-    http.begin(apiEndpoint);
+    http.begin(encodedUrl);
     http.setTimeout(TIMEOUT_MS);
-    
+
     if (apiKey.length() > 0) {
       http.addHeader(apiHeaderName, apiKey);
     }
-    
+
     Serial.println("Polling API: " + apiEndpoint);
+    if (encodedUrl != apiEndpoint) {
+      Serial.println("Encoded URL: " + encodedUrl);
+    }
     int httpCode = http.GET();
     
     if (httpCode > 0) {
@@ -860,20 +975,112 @@ void parseIconData(const String& jsonData) {
   Serial.println("Icon parsed successfully (64 pixels)");
 }
 
+// ============================================
+// Authentication Functions
+// ============================================
+
+bool checkAuth() {
+  // Check if authenticated and session hasn't expired
+  if (isAuthenticated && (millis() - authTimestamp < authTimeout)) {
+    authTimestamp = millis(); // Refresh session on activity
+    return true;
+  }
+  isAuthenticated = false;
+  return false;
+}
+
+void handleLogin() {
+  String html = "<!DOCTYPE html><html><head>";
+  html += "<meta name='viewport' content='width=device-width, initial-scale=1'>";
+  html += "<title>Login - " + deviceName + "</title>";
+  html += "<style>";
+  html += "body { font-family: Arial, sans-serif; margin: 0; padding: 0; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height: 100vh; display: flex; align-items: center; justify-content: center; }";
+  html += ".login-container { background: white; padding: 40px; border-radius: 10px; box-shadow: 0 10px 25px rgba(0,0,0,0.2); max-width: 400px; width: 90%; }";
+  html += "h1 { color: #333; margin-top: 0; text-align: center; }";
+  html += "label { display: block; margin-top: 15px; font-weight: bold; color: #555; }";
+  html += "input[type='password'] { width: 100%; padding: 12px; margin-top: 5px; border: 2px solid #ddd; border-radius: 5px; box-sizing: border-box; font-size: 16px; }";
+  html += "input[type='password']:focus { border-color: #4CAF50; outline: none; }";
+  html += ".button { display: block; width: 100%; background: #4CAF50; color: white; padding: 12px; text-decoration: none; border-radius: 5px; margin-top: 20px; border: none; cursor: pointer; font-size: 16px; font-weight: bold; }";
+  html += ".button:hover { background: #45a049; }";
+  html += ".error { background: #f8d7da; color: #721c24; padding: 10px; border-radius: 5px; margin-top: 10px; display: none; }";
+  html += ".device-info { text-align: center; color: #666; font-size: 14px; margin-top: 20px; }";
+  html += "</style>";
+  html += "</head><body>";
+  html += "<div class='login-container'>";
+  html += "<h1>TC001 Login</h1>";
+  html += "<p class='device-info'>Device: " + deviceName + "<br>IP: " + ipAddress + "</p>";
+  html += "<form method='POST' action='/login'>";
+  html += "<label>Password:</label>";
+  html += "<input type='password' name='password' placeholder='Enter password' required autofocus>";
+  html += "<button type='submit' class='button'>Login</button>";
+  html += "</form>";
+  html += "<div class='error' id='error'>Invalid password!</div>";
+  html += "</div>";
+
+  // Show error if login failed
+  if (server.hasArg("failed")) {
+    html += "<script>document.getElementById('error').style.display='block';</script>";
+  }
+
+  html += "</body></html>";
+  server.send(200, "text/html", html);
+}
+
+void handleLoginPost() {
+  String password = server.arg("password");
+
+  if (password == adminPassword) {
+    isAuthenticated = true;
+    authTimestamp = millis();
+    Serial.println("Login successful");
+    server.sendHeader("Location", "/");
+    server.send(303);
+  } else {
+    Serial.println("Login failed - incorrect password");
+    server.sendHeader("Location", "/login?failed=1");
+    server.send(303);
+  }
+}
+
+void handleLogout() {
+  isAuthenticated = false;
+  authTimestamp = 0;
+  Serial.println("User logged out");
+  server.sendHeader("Location", "/login");
+  server.send(303);
+}
+
+bool requireAuth() {
+  if (!checkAuth()) {
+    server.sendHeader("Location", "/login");
+    server.send(303);
+    return false;
+  }
+  return true;
+}
+
 void setupWebServer() {
+  // Public routes (no auth required)
+  server.on("/login", HTTP_GET, handleLogin);
+  server.on("/login", HTTP_POST, handleLoginPost);
+  server.on("/logout", handleLogout);
+  server.on("/status", handleStatus);
+  server.on("/favicon.ico", handleFavicon);
+
+  // Protected routes (auth required)
   server.on("/", handleRoot);
   server.on("/config/api", handleAPIConfigPage);
   server.on("/config/api/save", HTTP_POST, handleSaveAPIConfig);
-  server.on("/config/general", handleGeneralConfig);  // General config page
-  server.on("/config/general/save", HTTP_POST, handleSaveGeneralConfig);  // General config save handler
+  server.on("/config/general", handleGeneralConfig);
+  server.on("/config/general/save", HTTP_POST, handleSaveGeneralConfig);
   server.on("/test", handleTestAPI);
   server.on("/reset", handleFactoryReset);
-  server.on("/status", handleStatus);
   server.on("/restart", handleRestart);
-  server.on("/favicon.ico", handleFavicon);
 }
 
 void handleRoot() {
+  if (!requireAuth()) return;
+
   String html = "<!DOCTYPE html><html><head>";
   html += "<meta name='viewport' content='width=device-width, initial-scale=1'>";
   html += "<style>";
@@ -937,20 +1144,24 @@ void handleRoot() {
   html += "<button onclick='location.href=\"/status\"' class='button secondary'>View JSON Status</button>";
   html += "<button onclick='if(confirm(\"Restart Device?\")) location.href=\"/restart\"' class='button secondary'>Restart</button>";
   html += "<button onclick='if(confirm(\"Reset all settings?\")) location.href=\"/reset\"' class='button danger'>Factory Reset</button>";
-  
-  // Physical Button Controls Info
-  html += "<h2>Button Controls</h2>";
-  html += "<div class='info-row'><span class='label'>Button 1 (startup):</span><span class='value'>Enter WiFi config</span></div>";
-  html += "<div class='info-row'><span class='label'>Button 2 + 3 (hold):</span><span class='value'>Show battery status</span></div>";
-  html += "<div class='info-row'><span class='label'>All 3 (hold 3s):</span><span class='value'>Factory reset</span></div>";
+  html += "<button onclick='location.href=\"/logout\"' class='button secondary' style='margin-top: 10px;'>Logout</button>";
   
   html += "</div>";
+
+  // Footer
+  html += "<div style='margin-top: 30px; padding-top: 20px; border-top: 1px solid #ddd; text-align: center; color: #666; font-size: 14px;'>";
+  html += "<p style='margin: 5px 0;'><strong>Ulanzi TC001 API Monitor</strong> " + buildNumber + "</p>";
+  html += "<p style='margin: 5px 0;'>Source Code and Documentation &bull; <a href='https://github.com/TommySharpNZ/Ulanzi-TC001-API-Monitor' target='_blank' style='color: #4CAF50; text-decoration: none;'>GitHub Repository</a></p>";
+  html += "<p style='margin: 5px 0; font-size: 12px;'>Built for the community</p>";
+  html += "</div>";
+
   html += "</body></html>";
   
   server.send(200, "text/html", html);
 }
 
 void handleGeneralConfig() {
+  if (!requireAuth()) return;
   String html = "<!DOCTYPE html><html><head>";
   html += "<meta name='viewport' content='width=device-width, initial-scale=1'>";  
   html += "<title>General Settings - " + deviceName + "</title>";
@@ -994,9 +1205,15 @@ void handleGeneralConfig() {
   html += "<p class='help'>Set brightness level (10-255)</p>";
   html += "</div>";
 
+  // Admin password section
+  html += "<h2 style='margin-top: 30px;'>Admin Password</h2>";
+  html += "<label>New Password:</label>";
+  html += "<input type='password' name='adminPassword' placeholder='Leave blank to keep current password'>";
+  html += "<p class='help'>Change the admin password for accessing the web interface. Leave blank to keep the current password.</p>";
+
   html += "<button type='submit' class='button'>Save Settings</button>";
   html += "<button type='button' onclick='location.href=\"/\"' class='button secondary'>Back</button>";
-  
+
   html += "</form>";
 
   html += "<div id='testResult' style='margin-top: 20px;'></div>";
@@ -1019,6 +1236,7 @@ void handleGeneralConfig() {
 }
 
 void handleSaveGeneralConfig() {
+  if (!requireAuth()) return;
   Serial.println("=== Saving general configuration ===");
   
   // Debug: Show all received arguments
@@ -1051,12 +1269,22 @@ void handleSaveGeneralConfig() {
   } else {
     Serial.println("WARNING: No brightness argument received!");
   }
-  
+
+  // Check if admin password should be changed
+  if (server.hasArg("adminPassword")) {
+    String newPassword = server.arg("adminPassword");
+    if (newPassword.length() > 0) {
+      adminPassword = newPassword;
+      Serial.println("Admin password updated");
+    }
+  }
+
   // Save to preferences
   Serial.println("Writing to preferences...");
   preferences.begin("tc001", false);
   preferences.putBool("autoBrightness", autoBrightness);
   preferences.putInt("brightness", manualBrightness);
+  preferences.putString("adminPassword", adminPassword);
   preferences.end();
   Serial.println("Preferences written successfully");
   
@@ -1077,6 +1305,7 @@ void handleSaveGeneralConfig() {
 }
 
 void handleAPIConfigPage() {
+  if (!requireAuth()) return;
   String maskedKey = "";
   if (apiKey.length() > 0) {
     for (unsigned int i = 0; i < apiKey.length(); i++) {
@@ -1115,31 +1344,31 @@ void handleAPIConfigPage() {
   html += "<form method='POST' action='/config/api/save' accept-charset='utf-8'>";
   
   html += "<label>API Endpoint URL:</label>";
-  html += "<input type='text' name='apiUrl' value='" + apiEndpoint + "' placeholder='https://api.example.com/data' required>";
+  html += "<input type='text' name='apiUrl' value='" + htmlEscape(apiEndpoint) + "' placeholder='https://api.example.com/data' required>";
   html += "<p class='help'>Full URL to your API endpoint</p>";
-  
+
   html += "<label>API Header Name:</label>";
-  html += "<input type='text' name='apiHeader' value='" + apiHeaderName + "' placeholder='APIKey'>";
+  html += "<input type='text' name='apiHeader' value='" + htmlEscape(apiHeaderName) + "' placeholder='APIKey'>";
   html += "<p class='help'>Authentication header name (e.g., APIKey, Authorization, X-API-Key)</p>";
-  
+
   html += "<label>API Key:</label>";
-  html += "<input type='password' name='apiKey' value='" + apiKey + "' placeholder='" + (apiKey.length() > 0 ? maskedKey : "your-api-key-here") + "'>";
+  html += "<input type='password' name='apiKey' value='" + htmlEscape(apiKey) + "' placeholder='" + (apiKey.length() > 0 ? maskedKey : "your-api-key-here") + "'>";
   html += "<p class='help'>Your API authentication key</p>";
-  
+
   html += "<label>JSON Path:</label>";
-  html += "<input type='text' name='jsonPath' value='" + jsonPath + "' placeholder='data.count' required>";
+  html += "<input type='text' name='jsonPath' value='" + htmlEscape(jsonPath) + "' placeholder='data.count' required>";
   html += "<p class='help'>Path to value in JSON response (e.g., data.count or users[0].name or items[status=active].count)</p>";
-  
+
   html += "<label>Display Prefix:</label>";
-  html += "<input type='text' name='prefix' value='" + displayPrefix + "' placeholder='Tickets: '>";
+  html += "<input type='text' name='prefix' value='" + htmlEscape(displayPrefix) + "' placeholder='Tickets: '>";
   html += "<p class='help'>Text to show before the value (optional)</p>";
-  
+
   html += "<label>Display Suffix:</label>";
-  html += "<input type='text' name='suffix' value='" + displaySuffix + "' placeholder=' open'>";
+  html += "<input type='text' name='suffix' value='" + htmlEscape(displaySuffix) + "' placeholder=' open'>";
   html += "<p class='help'>Text to show after the value (optional)</p>";
-  
+
   html += "<label>Icon Data (8x8 RGB pixels):</label>";
-  html += "<textarea name='iconData' id='iconData' placeholder='[[255,0,0],[0,255,0],...]'>" + iconData + "</textarea>";
+  html += "<textarea name='iconData' id='iconData' placeholder='[[255,0,0],[0,255,0],...]'>" + htmlEscape(iconData) + "</textarea>";
   html += "<p class='help'>JSON array of 64 RGB pixels [r,g,b] for 8x8 icon (optional)</p>";
   html += "<div id='iconPreview' class='icon-preview'></div>";
   
@@ -1293,6 +1522,7 @@ void handleAPIConfigPage() {
 }
 
 void handleSaveAPIConfig() {
+  if (!requireAuth()) return;
   apiEndpoint = server.arg("apiUrl");
   apiHeaderName = server.arg("apiHeader");
   apiKey = server.arg("apiKey");
@@ -1340,26 +1570,46 @@ void handleSaveAPIConfig() {
 }
 
 void handleTestAPI() {
+  if (!requireAuth()) return;
   if (apiEndpoint.length() == 0) {
     server.send(400, "text/plain", "Error: No API endpoint configured");
     return;
   }
-  
+
+  const int TIMEOUT_MS = 10000; // 10 second timeout
+
+  Serial.println("Testing API: " + apiEndpoint);
+
+  // URL encode the endpoint to handle special characters in query parameters
+  String encodedUrl = urlEncode(apiEndpoint);
+
   HTTPClient http;
-  http.begin(apiEndpoint);
-  
+  http.begin(encodedUrl);
+  http.setTimeout(TIMEOUT_MS);
+
   if (apiKey.length() > 0) {
     http.addHeader(apiHeaderName, apiKey);
+    Serial.println("Added header: " + apiHeaderName);
   }
-  
+
+  Serial.println("Sending GET request...");
+  if (encodedUrl != apiEndpoint) {
+    Serial.println("Encoded URL: " + encodedUrl);
+  }
   int httpCode = http.GET();
-  String response = "HTTP Code: " + String(httpCode) + "\n\n";
-  
+  Serial.println("Received HTTP code: " + String(httpCode));
+
+  String response = "API Endpoint: " + apiEndpoint + "\n";
+  if (encodedUrl != apiEndpoint) {
+    response += "Encoded URL: " + encodedUrl + "\n";
+  }
+  response += "\nHTTP Code: " + String(httpCode) + "\n\n";
+
   if (httpCode > 0) {
     if (httpCode == HTTP_CODE_OK) {
       String payload = http.getString();
       response += "Response:\n" + payload + "\n\n";
-      
+
       String extractedValue = extractJSONValue(payload, jsonPath);
       if (extractedValue.length() > 0) {
         response += "Extracted Value: " + extractedValue;
@@ -1371,16 +1621,19 @@ void handleTestAPI() {
     }
   } else {
     response += "Error: " + http.errorToString(httpCode);
+    Serial.println("Error details: " + http.errorToString(httpCode));
   }
-  
+
   http.end();
-  
+
   server.send(200, "text/plain", response);
+  Serial.println("Test API response sent");
 }
 
 void handleRestart() {
+  if (!requireAuth()) return;
   Serial.println("Restart requested via web interface");
-  
+
   String html = "<!DOCTYPE html><html><head>";
   html += "<meta charset='UTF-8'>";
   html += "<meta name='viewport' content='width=device-width, initial-scale=1.0'>";
@@ -1401,6 +1654,7 @@ void handleRestart() {
 }
 
 void handleFactoryReset() {
+  if (!requireAuth()) return;
   server.send(200, "text/plain", "Resetting...");
   delay(1000);
   

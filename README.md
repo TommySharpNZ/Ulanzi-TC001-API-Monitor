@@ -1,6 +1,6 @@
-# Ulanzi TC001 Custom Firmware - API Display Monitor
+# Ulanzi TC001 API Monitor
 
-Custom firmware for the Ulanzi TC001 pixel display clock that enables portable API monitoring for markets, trade shows and events. This firmware allows the device to poll APIs directly without requiring external servers like AWTRIX.
+Custom firmware for the Ulanzi TC001 pixel display clock that enables portable API monitoring for markets, trade shows and events.
 
 ![TC001 Display](images/ulanzi-tc001.png)
 
@@ -22,7 +22,7 @@ Custom firmware for the Ulanzi TC001 pixel display clock that enables portable A
 
 ## Overview
 
-The TC001 Custom Firmware transforms your Ulanzi TC001 into a self-contained API monitoring device. Perfect for scenarios where you need portable, at-a-glance monitoring without relying on external infrastructure.
+This firmware transforms your Ulanzi TC001 into a self-contained API monitoring device. Perfect for scenarios where you need portable, at-a-glance monitoring without relying on external infrastructure.
 
 **Key Use Cases:**
 - Markets: Social media followers
@@ -34,6 +34,17 @@ The TC001 Custom Firmware transforms your Ulanzi TC001 into a self-contained API
 
 **Why This Over AWTRIX?**
 AWTRIX requires an external server to POST data to the device. This firmware polls APIs directly from the device, making it ideal for portable use on public WiFi networks where you can't run external servers.
+
+## What's New in v1.0.7
+
+- **Password Protection** - All configuration pages are now protected by password authentication. Default password is `ulanzitc001`, configurable in General Settings
+- **Session Management** - 30-minute session timeout with automatic refresh on activity
+- **Secure Logout** - Logout button added to main page for secure session termination
+- **Manual API Refresh** - Press the middle button (Button 2) for 1 second to force an immediate API refresh
+- **Improved Button Handling** - Completely redesigned button state machine for cleaner, more scalable button combinations
+- **Automatic URL Encoding** - API endpoints are now automatically URL-encoded, so you can paste URLs directly from documentation without manual encoding
+- **HTML Form Security** - Fixed HTML escaping to properly handle special characters in configuration fields
+- **Test API Timeout** - Added 10-second timeout to Test API function to prevent web UI lockups
 
 ## What's New in v1.0.6
 
@@ -94,9 +105,10 @@ AWTRIX requires an external server to POST data to the device. This firmware pol
 - 🔗 Direct API polling (no external server needed)
 - 🔐 Custom header authentication support
 - ⏱️ Configurable polling intervals (5-3600 seconds)
+- 🔄 Manual refresh via button hold (Button 2 for 1 second)
 - 🧭 Flexible JSON path navigation with array filtering
 - 📊 Support for nested objects and arrays
-- 🔍 Array filtering by field values (e.g., `users[name=John].age`)
+- 🔍 JSON Array filtering by field values (e.g., `users[name=John].age`)
 - ✅ HTTPS support
 
 #### Display
@@ -175,7 +187,34 @@ Built-in ESP32 libraries (no installation needed):
 
 ## Installation
 
-### 1. Backup Stock Firmware (Recommended)
+### Method 1: Web Installer (Recommended - Easiest!)
+
+The easiest way to install or update the firmware is using our web-based installer:
+
+**🌐 [Launch Web Installer](https://tommysharpnz.github.io/Ulanzi-TC001-API-Monitor/)**
+
+**Requirements:**
+- Google Chrome or Microsoft Edge browser
+- USB cable connected to your TC001 device
+
+**Steps:**
+1. Visit the web installer link above
+2. Click "Install Firmware v1.0.7" button
+3. Select your TC001's serial port when prompted
+4. Wait for installation to complete (about 30 seconds)
+5. Device will restart automatically
+
+**Benefits:**
+- ✅ No software installation required
+- ✅ Works on Windows, Mac, and Linux
+- ✅ Preserves your WiFi and API settings during updates
+- ✅ One-click installation process
+
+### Method 2: Arduino IDE (For Developers)
+
+If you want to modify the code or compile from source, use the Arduino IDE method below.
+
+#### 1. Backup Stock Firmware (Recommended)
 
 Before flashing custom firmware, backup the original:
 
@@ -192,7 +231,7 @@ To restore stock firmware later:
 esptool.py --port COM3 --baud 115200 write_flash 0x0 tc001_backup.bin
 ```
 
-### 2. Install Arduino IDE and Libraries
+#### 2. Install Arduino IDE and Libraries
 
 1. Download and install [Arduino IDE](https://www.arduino.cc/en/software)
 2. Add ESP32 board support:
@@ -205,7 +244,7 @@ esptool.py --port COM3 --baud 115200 write_flash 0x0 tc001_backup.bin
    - **Sketch → Include Library → Manage Libraries**
    - Search and install each library from the Requirements section
 
-### 3. Upload Firmware
+#### 3. Upload Firmware
 
 1. Open the `Ulanzi-TC001-API-Monitor.ino` sketch in Arduino IDE
 2. Configure board settings:
@@ -214,7 +253,7 @@ esptool.py --port COM3 --baud 115200 write_flash 0x0 tc001_backup.bin
 3. Click **Upload** button
 4. Wait for compilation and upload to complete
 
-### 4. Initial Setup
+### Initial Setup (All Methods)
 
 1. Device will create WiFi AP: `TC001-XXXXXX`
 2. Connect to this AP with your phone/computer
@@ -225,6 +264,26 @@ esptool.py --port COM3 --baud 115200 write_flash 0x0 tc001_backup.bin
 
 ## Configuration
 
+### Web Interface Authentication
+
+The web interface is protected by password authentication to secure your configuration.
+
+**Default Password:** `ulanzitc001`
+
+When you first access the web interface at your device's IP address, you'll be presented with a login screen. Enter the default password to access the configuration pages.
+
+**Changing the Password:**
+1. Log in to the web interface
+2. Navigate to General Settings (Config button)
+3. Scroll to the "Admin Password" section
+4. Enter your new password
+5. Click "Save Settings"
+
+**Session Management:**
+- Sessions remain active for 30 minutes with automatic refresh on activity
+- Click the "Logout" button on the main page to end your session
+- If you forget your password, perform a factory reset (hold all 3 buttons for 3 seconds)
+
 ### Web Interface Configuration
 
 Navigate to your TC001's IP address (displayed on the LED matrix) to access the configuration interface.
@@ -233,7 +292,7 @@ Navigate to your TC001's IP address (displayed on the LED matrix) to access the 
 
 | Setting | Description | Example |
 |---------|-------------|---------|
-| **API Endpoint URL** | Full URL to your API | `https://api.example.com/data` |
+| **API Endpoint URL** | Full URL to your API (query parameters automatically encoded) | `https://api.example.com/data?filter=Name eq 'Value'` |
 | **API Header Name** | Authentication header name | `APIKey`, `Authorization`, `X-API-Key` |
 | **API Key** | Your API authentication key | `your-secret-key-here` |
 | **JSON Path** | Path to value in JSON response | `OverdueWorkflows[Username=John].Overdue` |
@@ -244,6 +303,8 @@ Navigate to your TC001's IP address (displayed on the LED matrix) to access the 
 | **Polling Interval** | Seconds between API calls | `60` (range: 5-3600) |
 | **Auto Brightness** | Checkbox for automatic brightness control | Checked = use light sensor, Unchecked = manual |
 | **Manual Brightness** | Slider for brightness level (when auto disabled) | `40` (range: 1-255) |
+
+**Note about URL encoding:** You can paste API URLs directly from your API documentation. Special characters in query parameters (like spaces, quotes, etc.) are automatically URL-encoded when the request is sent. For example, `filter=Name eq 'John'` is automatically encoded to `filter=Name%20eq%20%27John%27`.
 
 #### JSON Path Examples
 
@@ -350,7 +411,7 @@ The TC001 offers two brightness control modes to suit different environments and
 
 ### Testing API Connection
 
-Before saving, use the **Test Connection** button to verify:
+You must save API configuration before using the **Test Connection** button to verify:
 - API endpoint is reachable
 - Authentication is working
 - JSON path correctly extracts the value
@@ -467,18 +528,15 @@ Once configured, the device will:
 **API Response:**
 ```json
 {
-  "bpi": {
-    "USD": {
-      "rate_float": 43250.5432
-    }
-  }
+    "symbol": "BTCUSDT",
+    "price": "95574.27000000"
 }
 ```
 
 **Configuration:**
-- API Endpoint: `https://api.coindesk.com/v1/bpi/currentprice/BTC.json`
+- API Endpoint: `https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT`
 - API Key: (leave blank - no auth needed)
-- JSON Path: `bpi.USD.rate_float`
+- JSON Path: `price`
 - Display Prefix: `BTC: $`
 - Display Suffix: `` (empty)
 - Enable Scrolling: ✅ Checked
@@ -513,9 +571,10 @@ The API can return any valid JSON structure. Use the JSON path configuration to 
 | Action | Result |
 |--------|--------|
 | **Hold Button 1 during startup** | Enter WiFi configuration mode |
+| **Hold Button 2 for 1 second** | Force immediate API refresh (manual update) |
 | **Hold Button 2 + Button 3 for 0.5s** | Show battery status on display (3 seconds) |
 | **Hold all 3 buttons for 3 seconds** | Factory reset (WiFi + API settings) |
-| **Hold Left + Right buttons** | Power on/off (hardware feature) |
+| **Hold Left (Button 1) + Right (Button 3) buttons** | Power on/off (hardware feature) |
 
 ### Factory Reset
 
@@ -537,9 +596,19 @@ Device will restart in AP mode for reconfiguration.
 
 Currently single-file Arduino sketch:
 ```
-TC001_Custom/
+Ulanzi-TC001-API-Monitor/
 ├── Ulanzi-TC001-API-Monitor.ino    # Main firmware file
-└── README.md                                 # This file
+├── README.md                       # Documentation
+├── Ulanzi-TC001-API-Monitor.bin    # Pre-compiled firmware binary
+├── docs/                           # GitHub Pages web installer
+│   ├── index.html                  # Web installer interface
+│   ├── manifest.json              # ESP Web Tools manifest
+│   └── firmware/                  # Firmware binaries folder
+│       ├── bootloader.bin         # ESP32 bootloader
+│       ├── partitions.bin         # Partition table
+│       ├── boot_app0.bin          # Boot app
+│       └── Ulanzi-TC001-API-Monitor.bin  # Application binary
+└── images/                        # Documentation images
 ```
 
 ### Code Organization
@@ -554,6 +623,112 @@ Main components:
 - **Storage** - NVS preferences for configuration
 - **Button Handler** - Physical button controls
 
+### Building and Publishing Releases
+
+If you're a developer creating a new release, follow these steps to generate all required binary files for the web installer:
+
+#### 1. Export Compiled Binaries from Arduino IDE
+
+1. Open `Ulanzi-TC001-API-Monitor.ino` in Arduino IDE
+2. Configure board settings:
+   - **Tools → Board → ESP32 Arduino → ESP32 Dev Module**
+   - **Tools → Partition Scheme → Default 4MB with spiffs (1.2MB APP/1.5MB SPIFFS)**
+3. Go to **Sketch → Export Compiled Binary** (or press Ctrl+Alt+S)
+4. Wait for compilation to complete
+5. Arduino IDE will create several files in your sketch folder:
+   - `Ulanzi-TC001-API-Monitor.ino.bin` - Main application
+   - `Ulanzi-TC001-API-Monitor.ino.bootloader.bin` - Bootloader
+   - `Ulanzi-TC001-API-Monitor.ino.partitions.bin` - Partition table
+
+#### 2. Get boot_app0.bin
+
+The `boot_app0.bin` file is not exported by Arduino IDE but is required for ESP32 flashing. You can find it in your Arduino ESP32 package:
+
+**Windows:**
+```
+C:\Users\<YourUsername>\AppData\Local\Arduino15\packages\esp32\hardware\esp32\<version>\tools\partitions\boot_app0.bin
+```
+
+**Mac:**
+```
+~/Library/Arduino15/packages/esp32/hardware/esp32/<version>/tools/partitions/boot_app0.bin
+```
+
+**Linux:**
+```
+~/.arduino15/packages/esp32/hardware/esp32/<version>/tools/partitions/boot_app0.bin
+```
+
+#### 3. Copy Files to Web Installer Folder
+
+Copy and rename the exported files to `docs/firmware/`:
+
+```bash
+# Copy main application (rename to remove .ino)
+cp Ulanzi-TC001-API-Monitor.ino.bin docs/firmware/Ulanzi-TC001-API-Monitor.bin
+
+# Copy bootloader
+cp Ulanzi-TC001-API-Monitor.ino.bootloader.bin docs/firmware/bootloader.bin
+
+# Copy partition table
+cp Ulanzi-TC001-API-Monitor.ino.partitions.bin docs/firmware/partitions.bin
+
+# Copy boot_app0.bin from Arduino ESP32 package
+cp <path-to-arduino15>/packages/esp32/hardware/esp32/<version>/tools/partitions/boot_app0.bin docs/firmware/boot_app0.bin
+```
+
+#### 4. Update Version Numbers
+
+Update version numbers in these files:
+- `Ulanzi-TC001-API-Monitor.ino` - Line 12: `String buildNumber = "vX.X.X";`
+- `docs/manifest.json` - Line 3: `"version": "X.X.X",`
+- `docs/index.html` - Line 7 (title) and line 22 (version display)
+- `README.md` - "What's New" section at the top
+
+#### 5. Test the Web Installer Locally
+
+Before pushing to GitHub, test the web installer locally:
+
+1. Start a local web server in the `docs` folder:
+   ```bash
+   cd docs
+   python -m http.server 8000
+   ```
+
+2. Open Chrome/Edge and navigate to `http://localhost:8000`
+3. Test the installation process with your TC001 device
+4. Verify settings are preserved during update
+
+#### 6. Commit and Push to GitHub
+
+```bash
+git add .
+git commit -m "Release vX.X.X - Description of changes"
+git push origin main
+```
+
+#### 7. Enable GitHub Pages
+
+If not already enabled:
+1. Go to repository **Settings → Pages**
+2. Source: **Deploy from a branch**
+3. Branch: **main** → **/docs** folder
+4. Click **Save**
+
+GitHub Pages will be available at: `https://tommysharpnz.github.io/Ulanzi-TC001-API-Monitor/`
+
+#### Binary File Addresses Reference
+
+For manual flashing or troubleshooting:
+```
+0x1000  (4096)   - bootloader.bin
+0x8000  (32768)  - partitions.bin
+0xE000  (57344)  - boot_app0.bin
+0x10000 (65536)  - Ulanzi-TC001-API-Monitor.bin (main application)
+```
+
+The web installer automatically flashes all files at the correct addresses.
+
 ## Future Enhancements
 
 Planned features for future releases:
@@ -566,7 +741,6 @@ Planned features for future releases:
 - [ ] Threshold-based color coding (e.g., red if value > 10)
 - [ ] Time display option
 - [ ] Temperature/weather display
-- [ ] Combination of button press to force refresh of current screen
 
 ### Low Priority
 - [ ] OTA (Over-The-Air) firmware updates

@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Ulanzi TC001 API Monitor - Web Installer</title>
+  <script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module"></script>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+
+    .container {
+      background: white;
+      border-radius: 20px;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+      max-width: 800px;
+      width: 100%;
+      padding: 40px;
+    }
+
+    h1 {
+      color: #333;
+      font-size: 2.5em;
+      margin-bottom: 10px;
+      text-align: center;
+    }
+
+    .version {
+      text-align: center;
+      color: #666;
+      font-size: 1.1em;
+      margin-bottom: 30px;
+    }
+
+    .hero-image {
+      text-align: center;
+      margin-bottom: 30px;
+    }
+
+    .hero-image img {
+      max-width: 400px;
+      width: 100%;
+      height: auto;
+      border-radius: 10px;
+    }
+
+    .description {
+      color: #555;
+      line-height: 1.6;
+      margin-bottom: 30px;
+      font-size: 1.1em;
+    }
+
+    .install-section {
+      background: #f8f9fa;
+      border-radius: 10px;
+      padding: 30px;
+      margin: 30px 0;
+      text-align: center;
+    }
+
+    .install-section h2 {
+      color: #333;
+      margin-bottom: 15px;
+    }
+
+    esp-web-install-button {
+      display: inline-block;
+      margin: 20px 0;
+    }
+
+    esp-web-install-button button {
+      background: #4CAF50;
+      color: white;
+      border: none;
+      padding: 15px 40px;
+      font-size: 1.2em;
+      border-radius: 8px;
+      cursor: pointer;
+      font-weight: bold;
+      transition: all 0.3s ease;
+      box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    }
+
+    esp-web-install-button button:hover {
+      background: #45a049;
+      transform: translateY(-2px);
+      box-shadow: 0 6px 12px rgba(0, 0, 0, 0.15);
+    }
+
+    .requirements {
+      background: #fff3cd;
+      border-left: 4px solid #ffc107;
+      padding: 15px;
+      margin: 20px 0;
+      border-radius: 5px;
+    }
+
+    .requirements h3 {
+      color: #856404;
+      margin-bottom: 10px;
+    }
+
+    .requirements ul {
+      list-style-position: inside;
+      color: #856404;
+    }
+
+    .requirements li {
+      margin: 5px 0;
+    }
+
+    .features {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+      gap: 20px;
+      margin: 30px 0;
+    }
+
+    .feature {
+      background: #e3f2fd;
+      padding: 20px;
+      border-radius: 10px;
+      border-left: 4px solid #2196F3;
+    }
+
+    .feature h3 {
+      color: #1976d2;
+      margin-bottom: 10px;
+    }
+
+    .feature p {
+      color: #555;
+      line-height: 1.5;
+    }
+
+    .info-box {
+      background: #d4edda;
+      border-left: 4px solid #28a745;
+      padding: 15px;
+      margin: 20px 0;
+      border-radius: 5px;
+    }
+
+    .info-box strong {
+      color: #155724;
+    }
+
+    .info-box p {
+      color: #155724;
+      margin: 5px 0;
+    }
+
+    .links {
+      text-align: center;
+      margin-top: 30px;
+      padding-top: 20px;
+      border-top: 1px solid #ddd;
+    }
+
+    .links a {
+      display: inline-block;
+      margin: 0 10px;
+      color: #4CAF50;
+      text-decoration: none;
+      font-weight: bold;
+    }
+
+    .links a:hover {
+      text-decoration: underline;
+    }
+
+    @media (max-width: 600px) {
+      .container {
+        padding: 20px;
+      }
+
+      h1 {
+        font-size: 1.8em;
+      }
+
+      .features {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🖥️ Ulanzi TC001 API Monitor</h1>
+    <p class="version">Firmware Version 1.0.7</p>
+
+    <div class="description">
+      <p>Transform your Ulanzi TC001 pixel clock into a powerful API monitoring display. Monitor any JSON API endpoint and display custom data with icons, scrolling text, and automatic brightness control.</p>
+    </div>
+
+    <div class="features">
+      <div class="feature">
+        <h3>📡 API Integration</h3>
+        <p>Connect to any REST API with support for custom headers and complex JSON path extraction.</p>
+      </div>
+      <div class="feature">
+        <h3>🎨 Custom Display</h3>
+        <p>Upload 8x8 pixel icons, customize prefix/suffix text, and choose between scrolling or static display modes.</p>
+      </div>
+      <div class="feature">
+        <h3>🔋 Battery Monitoring</h3>
+        <p>Real-time battery voltage and percentage display with low battery warnings.</p>
+      </div>
+      <div class="feature">
+        <h3>☀️ Auto Brightness</h3>
+        <p>Automatic brightness adjustment using the built-in light sensor or manual control.</p>
+      </div>
+    </div>
+
+    <div class="install-section">
+      <h2>🚀 Install Firmware</h2>
+
+      <div class="requirements">
+        <h3>⚠️ Requirements</h3>
+        <ul>
+          <li>Google Chrome or Microsoft Edge browser</li>
+          <li>USB cable connected to TC001 device</li>
+          <li>Device in bootloader mode (if needed)</li>
+        </ul>
+      </div>
+
+      <div class="info-box">
+        <strong>✅ Settings Preserved!</strong>
+        <p>This installer will update your firmware while preserving your WiFi credentials and API configuration. No need to reconfigure after update!</p>
+      </div>
+
+      <esp-web-install-button manifest="./manifest.json">
+        <button slot="activate">Install Firmware v1.0.7</button>
+        <span slot="unsupported">
+          ⚠️ Your browser doesn't support Web Serial API. Please use Google Chrome or Microsoft Edge.
+        </span>
+        <span slot="not-allowed">
+          ⚠️ Serial port access not allowed. Please check browser permissions.
+        </span>
+      </esp-web-install-button>
+
+      <p style="color: #666; font-size: 0.9em; margin-top: 15px;">
+        Click the button above and select your TC001 device's serial port when prompted.
+      </p>
+    </div>
+
+    <div class="info-box" style="background: #e3f2fd; border-color: #2196F3;">
+      <strong style="color: #1565c0;">📖 After Installation</strong>
+      <p style="color: #1565c0;">
+        1. The device will restart automatically<br>
+        2. Connect to the "TC001-XXXXXX" WiFi network if first install<br>
+        3. Configure your WiFi and API settings via the web interface<br>
+        4. Access the web UI at the device's IP address
+      </p>
+    </div>
+
+    <div class="links">
+      <a href="https://github.com/TommySharpNZ/Ulanzi-TC001-API-Monitor" target="_blank">📦 GitHub Repository</a>
+      <a href="https://github.com/TommySharpNZ/Ulanzi-TC001-API-Monitor/blob/main/README.md" target="_blank">📚 Documentation</a>
+      <a href="https://github.com/TommySharpNZ/Ulanzi-TC001-API-Monitor/issues" target="_blank">🐛 Report Issues</a>
+    </div>
+
+    <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #ddd; text-align: center; color: #666; font-size: 0.9em;">
+      <p><strong>Ulanzi TC001 API Monitor</strong> - Built for the community</p>
+      <p style="margin-top: 10px;">Powered by <a href="https://esphome.github.io/esp-web-tools/" target="_blank" style="color: #4CAF50;">ESP Web Tools</a></p>
+    </div>
+  </div>
+</body>
+</html>

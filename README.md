@@ -607,7 +607,7 @@ Ulanzi-TC001-API-Monitor/
 │       ├── bootloader.bin         # ESP32 bootloader
 │       ├── partitions.bin         # Partition table
 │       ├── boot_app0.bin          # Boot app
-│       └── Ulanzi-TC001-API-Monitor.bin  # Application binary
+│       └── customfirmware.bin     # Application binary
 └── images/                        # Documentation images
 ```
 
@@ -664,8 +664,8 @@ C:\Users\<YourUsername>\AppData\Local\Arduino15\packages\esp32\hardware\esp32\<v
 Copy and rename the exported files to `docs/firmware/`:
 
 ```bash
-# Copy main application (rename to remove .ino)
-cp Ulanzi-TC001-API-Monitor.ino.bin docs/firmware/Ulanzi-TC001-API-Monitor.bin
+# Copy main application (rename to customfirmware.bin)
+cp Ulanzi-TC001-API-Monitor.ino.bin docs/firmware/customfirmware.bin
 
 # Copy bootloader
 cp Ulanzi-TC001-API-Monitor.ino.bootloader.bin docs/firmware/bootloader.bin
@@ -724,7 +724,7 @@ For manual flashing or troubleshooting:
 0x1000  (4096)   - bootloader.bin
 0x8000  (32768)  - partitions.bin
 0xE000  (57344)  - boot_app0.bin
-0x10000 (65536)  - Ulanzi-TC001-API-Monitor.bin (main application)
+0x10000 (65536)  - customfirmware.bin (main application)
 ```
 
 The web installer automatically flashes all files at the correct addresses.

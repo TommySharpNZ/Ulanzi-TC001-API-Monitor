@@ -2,7 +2,7 @@
   "name": "Ulanzi TC001 API Monitor",
   "version": "1.0.7",
   "home_assistant_domain": "tc001",
-  "new_install_prompt_erase": false,
+  "new_install_prompt_erase": true,
   "new_install_improv_wait_time": 0,
   "funding_url": "https://github.com/TommySharpNZ/Ulanzi-TC001-API-Monitor",
   "builds": [

@@ -215,7 +215,7 @@
     </div>
 
     <div class="install-section">
-      <h2>🚀 Install or Update Firmware</h2>
+      <h2>🚀 Install Firmware</h2>
 
       <div class="requirements">
         <h3>⚠️ Requirements</h3>
@@ -226,13 +226,17 @@
         </ul>
       </div>
 
-      <div class="info-box" style="background: #fff3cd; border-color: #ffc107;">
-        <strong style="color: #856404;">🆕 First Time Installation?</strong>
-        <p style="color: #856404;">Use the "Clean Install" button below for new devices or if you want to completely reset your device.</p>
+      <div class="info-box" style="background: #e3f2fd; border-color: #2196F3;">
+        <strong style="color: #1565c0;">💡 Erase Device Option</strong>
+        <p style="color: #1565c0;">
+          When you click install, you'll be asked whether to erase the device:<br><br>
+          <strong>✅ Keep "Erase device" UNCHECKED</strong> - Updates firmware while preserving WiFi and API settings (recommended for updates)<br><br>
+          <strong>⚠️ CHECK "Erase device"</strong> - Completely wipes and reinstalls everything (required for first install or if device won't boot)
+        </p>
       </div>
 
-      <esp-web-install-button manifest="./manifest-update.json">
-        <button slot="activate" style="background: #2196F3;">Update Firmware (Keep Settings)</button>
+      <esp-web-install-button manifest="./manifest.json">
+        <button slot="activate">Install Firmware</button>
         <span slot="unsupported">
           ⚠️ Your browser doesn't support Web Serial API. Please use Google Chrome or Microsoft Edge.
         </span>
@@ -241,28 +245,9 @@
         </span>
       </esp-web-install-button>
 
-      <p style="color: #666; font-size: 0.9em; margin: 10px 0;">
-        ✅ Updates bootloader and firmware - attempts to preserve WiFi and settings
+      <p style="color: #666; font-size: 0.9em; margin-top: 15px;">
+        Click the button above and select your TC001 device's serial port when prompted.
       </p>
-      <p style="color: #ff9800; font-size: 0.85em; margin: 10px 0;">
-        ⚠️ If update fails or device won't boot, use "Clean Install" below
-      </p>
-
-      <div style="margin: 20px 0; border-top: 1px solid #ddd; padding-top: 20px;">
-        <esp-web-install-button manifest="./manifest.json">
-          <button slot="activate">Clean Install (Erase All)</button>
-          <span slot="unsupported">
-            ⚠️ Your browser doesn't support Web Serial API. Please use Google Chrome or Microsoft Edge.
-          </span>
-          <span slot="not-allowed">
-            ⚠️ Serial port access not allowed. Please check browser permissions.
-          </span>
-        </esp-web-install-button>
-
-        <p style="color: #666; font-size: 0.9em; margin-top: 10px;">
-          ⚠️ Full installation - erases all settings and reconfiguration required
-        </p>
-      </div>
     </div>
 
     <div class="info-box" style="background: #e3f2fd; border-color: #2196F3;">

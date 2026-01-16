@@ -201,33 +201,13 @@
 <body>
   <div class="container">
     <h1>🖥️ Ulanzi TC001 API Monitor</h1>
-    <p class="version">Firmware Version 1.0.7</p>
 
     <div class="description">
       <p>Transform your Ulanzi TC001 pixel clock into a powerful API monitoring display. Monitor any JSON API endpoint and display custom data with icons, scrolling text, and automatic brightness control.</p>
     </div>
 
-    <div class="features">
-      <div class="feature">
-        <h3>📡 API Integration</h3>
-        <p>Connect to any REST API with support for custom headers and complex JSON path extraction.</p>
-      </div>
-      <div class="feature">
-        <h3>🎨 Custom Display</h3>
-        <p>Upload 8x8 pixel icons, customize prefix/suffix text, and choose between scrolling or static display modes.</p>
-      </div>
-      <div class="feature">
-        <h3>🔋 Battery Monitoring</h3>
-        <p>Real-time battery voltage and percentage display with low battery warnings.</p>
-      </div>
-      <div class="feature">
-        <h3>☀️ Auto Brightness</h3>
-        <p>Automatic brightness adjustment using the built-in light sensor or manual control.</p>
-      </div>
-    </div>
-
     <div class="install-section">
-      <h2>🚀 Install Firmware</h2>
+      <h2>🚀 Install Latest Firmware</h2>
 
       <div class="requirements">
         <h3>⚠️ Requirements</h3>
@@ -244,7 +224,7 @@
       </div>
 
       <esp-web-install-button manifest="./manifest.json">
-        <button slot="activate">Install Firmware v1.0.7</button>
+        <button slot="activate">Install Firmware</button>
         <span slot="unsupported">
           ⚠️ Your browser doesn't support Web Serial API. Please use Google Chrome or Microsoft Edge.
         </span>
@@ -265,18 +245,19 @@
         2. Connect to the "TC001-XXXXXX" WiFi network if first install<br>
         3. Configure your WiFi and API settings via the web interface<br>
         4. Access the web UI at the device's IP address
+        5. Default password is "ulanzitc001"
       </p>
     </div>
 
     <div class="links">
       <a href="https://github.com/TommySharpNZ/Ulanzi-TC001-API-Monitor" target="_blank">📦 GitHub Repository</a>
-      <a href="https://github.com/TommySharpNZ/Ulanzi-TC001-API-Monitor/blob/main/README.md" target="_blank">📚 Documentation</a>
+      <a href="https://github.com/TommySharpNZ/Ulanzi-TC001-API-Monitor" target="_blank">📚 Documentation</a>
       <a href="https://github.com/TommySharpNZ/Ulanzi-TC001-API-Monitor/issues" target="_blank">🐛 Report Issues</a>
     </div>
 
     <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #ddd; text-align: center; color: #666; font-size: 0.9em;">
       <p><strong>Ulanzi TC001 API Monitor</strong> - Built for the community</p>
-      <p style="margin-top: 10px;">Powered by <a href="https://esphome.github.io/esp-web-tools/" target="_blank" style="color: #4CAF50;">ESP Web Tools</a></p>
+      <p style="margin-top: 10px;">Web Installer Powered by <a href="https://esphome.github.io/esp-web-tools/" target="_blank" style="color: #4CAF50;">ESP Web Tools</a></p>
     </div>
   </div>
 </body>

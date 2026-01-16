@@ -881,6 +881,7 @@ This project is open source and available under the MIT License.
 - **Adafruit** for the LED matrix libraries
 - **Benoit Blanchon** for ArduinoJson
 - The ESP32 Arduino community
+- **Claude AI** for helping me with coding and documentation where I needed it
 
 ## Support
 

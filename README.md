@@ -110,7 +110,7 @@ AWTRIX requires an external server to POST data to the device. This firmware pol
 - 🔄 Easy reconfiguration via buttons
 
 #### API Integration
-- 🔗 Direct API polling (no external server needed)
+- 🔗 Direct API polling of a **SINGLE** api endpoint (no external server needed)
 - 🔐 Custom header authentication support
 - ⏱️ Configurable polling intervals (5-3600 seconds)
 - 🔄 Manual refresh via button hold (Button 2 for 1 second)
@@ -120,17 +120,16 @@ AWTRIX requires an external server to POST data to the device. This firmware pol
 - ✅ HTTPS support
 
 #### Display
-- 📜 Scrolling or static display modes
+- 📜 Scrolling or static value display modes
 - 🎨 Color-coded status (green=ok, red=error, yellow=warning)
 - 🖼️ 8x8 icon support (scrolls with text)
 - 🏷️ Optional display prefix and suffix
-- 📱 Real-time value updates
 - 🎯 Automatic centering in static mode
 - ⚡ Immediate API polling on startup (no waiting for first interval)
 
 #### Brightness Control
 - 🌞 Auto brightness using onboard light sensor
-- 🎚️ Manual brightness slider (1-255)
+- 🎚️ Manual brightness config slider (1-255)
 - 🌙 Adaptive dimming for dark environments (as low as brightness 1)
 - ☀️ Automatic brightening in daylight (up to brightness 255)
 - 🎯 Non-linear curve optimized for indoor use
@@ -138,9 +137,9 @@ AWTRIX requires an external server to POST data to the device. This firmware pol
 - 🔄 Real-time brightness updates every 100ms in auto mode
 
 #### Icon Support
-- 🎨 8x8 pixel RGB icons
+- 🎨 8x8 pixel RGB icon
 - 🔄 Icons scroll with text
-- 📋 JSON array format: `[[r,g,b],[r,g,b],...]`
+- 📋 Simple JSON array format: `[[r,g,b],[r,g,b],...]`
 - 👁️ Live design and preview in configuration interface
 - 💾 Stored locally (no external dependencies)
 
@@ -149,18 +148,17 @@ AWTRIX requires an external server to POST data to the device. This firmware pol
 - 🧪 API connection testing
 - 📊 Status monitoring with battery info
 - 🔄 Factory reset option
-- 👁️ Icon preview before saving
 
 #### Battery Management 🔋
 - 📊 Real-time voltage and percentage monitoring
 - 🔊 Low battery audio alerts (20% and 10%)
 - 🎮 Button combination (Button 2 + 3) to show battery
 - 📈 Non-linear voltage curve for accurate LiPo readings
-- 🔔 Critical battery warnings with double beep
 
 #### Security
-- 🔒 Secure NVS storage for API keys
+- 🔒 Secure NVS storage for API key
 - 🎭 Masked API key display
+- 🔒 Password restricted config area
 - 💾 Persistent settings across reboots
 
 #### Device Management
@@ -207,7 +205,7 @@ The easiest way to install or update the firmware is using our web-based install
 
 **Steps:**
 1. Visit the web installer link above
-2. Click "Install Firmware v1.0.7" button
+2. Click "Install Firmware" button
 3. Select your TC001's serial port when prompted
 4. Wait for installation to complete (about 30 seconds)
 5. Device will restart automatically

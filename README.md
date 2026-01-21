@@ -25,6 +25,8 @@ Custom firmware for the Ulanzi TC001 pixel display clock that enables portable A
 
 This firmware transforms your Ulanzi TC001 into a self-contained API monitoring device. Perfect for scenarios where you need portable, at-a-glance monitoring without relying on external infrastructure.
 
+> ⚠️ **Important:** This firware displays a single metric on the screen and cannot scroll through various apis etc. This is something I'd like to do in the future so please use the Discussions area to suggest new features and enhancements.
+
 **Key Use Cases:**
 - Markets: Social media followers
 - Trade show booth metrics (visitor counts, lead generation)

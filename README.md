@@ -38,6 +38,15 @@ This firmware transforms your Ulanzi TC001 into a self-contained API monitoring 
 **Why This Over AWTRIX?**
 AWTRIX requires an external server to POST data to the device. This firmware polls APIs directly from the device, making it ideal for portable use on public WiFi networks where you can't run external servers.
 
+## What's New in v1.1.0
+
+- **Multi-Screen Support** - Configure up to 5 independent screens, each with its own API endpoint, JSON path, icon, polling interval, and display settings
+- **Button Navigation** - Short press Button 1 (previous) or Button 3 (next) to switch between screens; screen name shown briefly on the LED matrix when switching
+- **Auto-Rotation** - Optionally auto-cycle through screens at a configurable interval (3-300 seconds), configurable in General Settings
+- **Screen Management Web UI** - New `/screens` page to add, edit, delete, and set active screens with a card-based overview showing live values
+- **Independent Polling** - Each screen polls its own API at its own interval, so data is always fresh when switching
+- **Backward Compatible** - Existing single-screen configurations are automatically migrated to the new multi-screen format on first boot; backup/restore supports both old and new formats
+
 ## What's New in v1.0.8
 
 - **Backup & Restore** - Save and restore your device configuration via the web interface
@@ -816,8 +825,8 @@ The web installer automatically flashes all files at the correct addresses.
 Planned features for future releases:
 
 ### High Priority
-- [ ] Concept of "screens" allowing for multiple API endpoint support with button navigation or auto rotation
-- [ ] Multiple API endpoints with button navigation
+- [x] Concept of "screens" allowing for multiple API endpoint support with button navigation or auto rotation
+- [x] Multiple API endpoints with button navigation
 
 ### Medium Priority
 - [ ] Threshold-based color coding (e.g., red if value > 10)

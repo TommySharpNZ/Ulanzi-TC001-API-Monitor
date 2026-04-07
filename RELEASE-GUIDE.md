@@ -13,9 +13,6 @@ Quick reference for creating a new firmware release with web installer support.
 ### 1. Update Version Number
 
 Update the version in `Ulanzi-TC001-API-Monitor.ino`:
-```cpp
-String buildNumber = "v1.1.0";  // Update this line
-```
 
 ### 2. Export Binaries from Arduino IDE
 

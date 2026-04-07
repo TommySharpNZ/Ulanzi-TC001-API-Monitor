@@ -9,7 +9,7 @@
 #include <Preferences.h>
 
 // Project Details
-String buildNumber = "v1.1.0";
+String buildNumber = "v1.1.1";
 
 // Pin definitions
 #define BUTTON_1 26
@@ -245,6 +245,14 @@ void setup() {
     Serial.println("Performing initial API poll for active screen...");
     pollScreenAPI(activeScreen);
     screens[activeScreen].lastAPICall = millis();
+  }
+
+  // Stagger non-active screens so they don't all poll at the same time on first cycle.
+  // Each screen is offset by its index * 15 seconds from now, spreading the load.
+  for (int i = 0; i < numScreens; i++) {
+    if (i != activeScreen) {
+      screens[i].lastAPICall = millis() - (unsigned long)(screens[i].pollingInterval * 1000) + (unsigned long)(i * 15000);
+    }
   }
 
   // Reset scroll position and auto-rotate timer
@@ -1928,8 +1936,8 @@ void handleScreenEditPage() {
   html += "<p class='help'>Authentication header name (e.g., APIKey, Authorization, X-API-Key)</p>";
 
   html += "<label>API Key:</label>";
-  html += "<input type='password' name='apiKey' value='" + htmlEscape(scrKey) + "' placeholder='" + (scrKey.length() > 0 ? maskedKey : "your-api-key-here") + "'>";
-  html += "<p class='help'>Your API authentication key</p>";
+  html += "<input type='password' name='apiKey' value='' placeholder='" + (scrKey.length() > 0 ? maskedKey : "your-api-key-here") + "'>";
+  html += "<p class='help'>Your API authentication key. Leave blank to keep the existing key.</p>";
 
   html += "<label>JSON Path:</label>";
   html += "<input type='text' name='jsonPath' value='" + htmlEscape(scrJsonPath) + "' placeholder='data.count' required>";
@@ -2082,7 +2090,11 @@ void handleScreenSave() {
   scr.name = server.arg("name");
   scr.apiEndpoint = server.arg("apiUrl");
   scr.apiHeaderName = server.arg("apiHeader");
-  scr.apiKey = server.arg("apiKey");
+  String submittedKey = server.arg("apiKey");
+  if (submittedKey.length() > 0) {
+    scr.apiKey = submittedKey;
+  }
+  // If blank, keep the existing key unchanged
   scr.jsonPath = server.arg("jsonPath");
   scr.displayPrefix = server.arg("prefix");
   scr.displaySuffix = server.arg("suffix");

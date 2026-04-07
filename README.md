@@ -38,6 +38,12 @@ This firmware transforms your Ulanzi TC001 into a self-contained API monitoring 
 **Why This Over AWTRIX?**
 AWTRIX requires an external server to POST data to the device. This firmware polls APIs directly from the device, making it ideal for portable use on public WiFi networks where you can't run external servers.
 
+## What's New in v1.1.1
+
+- **API Key Security Fix** - API keys are no longer sent to the browser when editing a screen. The edit form now shows a masked placeholder instead. Leaving the key field blank on save preserves the existing key
+
+- **Polling Stagger Fix** - Non-active screens now have their first poll staggered 15 seconds apart on startup, preventing all screens from polling simultaneously and potentially freezing the web UI for extended periods
+
 ## What's New in v1.1.0
 
 - **Multi-Screen Support** - Configure up to 5 independent screens, each with its own API endpoint, JSON path, icon, polling interval, and display settings
@@ -118,10 +124,17 @@ AWTRIX requires an external server to POST data to the device. This firmware pol
 - 💾 Persistent credential storage
 - 🔄 Easy reconfiguration via buttons
 
+#### Multi-Screen Support
+- 🖥️ Up to 5 independent screens, each with its own API endpoint and display settings
+- 🔀 Short press Button 1 (previous) or Button 3 (next) to navigate between screens
+- 🔁 Auto-rotation mode cycles through screens at a configurable interval (3-300 seconds)
+- ⚙️ Screen management page to add, edit, delete, and reorder screens
+- 💾 Active screen persists across reboots
+
 #### API Integration
-- 🔗 Direct API polling of a **SINGLE** api endpoint (no external server needed)
-- 🔐 Custom header authentication support
-- ⏱️ Configurable polling intervals (5-3600 seconds)
+- 🔗 Direct API polling (no external server needed)
+- 🔐 Custom header authentication support per screen
+- ⏱️ Configurable polling intervals per screen (5-3600 seconds)
 - 🔄 Manual refresh via button hold (Button 2 for 1 second)
 - 🧭 Flexible JSON path navigation with array filtering
 - 📊 Support for nested objects and arrays
@@ -129,10 +142,10 @@ AWTRIX requires an external server to POST data to the device. This firmware pol
 - ✅ HTTPS support
 
 #### Display
-- 📜 Scrolling or static value display modes
+- 📜 Scrolling or static value display modes per screen
 - 🎨 Color-coded status (green=ok, red=error, yellow=warning)
-- 🖼️ 8x8 icon support (scrolls with text)
-- 🏷️ Optional display prefix and suffix
+- 🖼️ 8x8 icon support per screen (scrolls with text)
+- 🏷️ Optional display prefix and suffix per screen
 - 🎯 Automatic centering in static mode
 - ⚡ Immediate API polling on startup (no waiting for first interval)
 
@@ -153,9 +166,10 @@ AWTRIX requires an external server to POST data to the device. This firmware pol
 - 💾 Stored locally (no external dependencies)
 
 #### Web Interface
-- ⚙️ Full configuration page
-- 🧪 API connection testing
-- 📊 Status monitoring with battery info
+- ⚙️ General settings page (brightness, auto-rotation, admin password)
+- 🖥️ Screen management page (add, edit, delete, set active)
+- 🧪 API connection testing per screen
+- 📊 Status monitoring with battery info and live screen values
 - 🔄 Factory reset option
 
 #### Battery Management 🔋
@@ -165,8 +179,8 @@ AWTRIX requires an external server to POST data to the device. This firmware pol
 - 📈 Non-linear voltage curve for accurate LiPo readings
 
 #### Security
-- 🔒 Secure NVS storage for API key
-- 🎭 Masked API key display
+- 🔒 Secure NVS storage for API keys (never sent to browser)
+- 🎭 Masked API key display in web interface
 - 🔒 Password restricted config area
 - 💾 Persistent settings across reboots
 

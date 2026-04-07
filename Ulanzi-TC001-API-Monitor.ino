@@ -9,7 +9,7 @@
 #include <Preferences.h>
 
 // Project Details
-String buildNumber = "v1.0.8";
+String buildNumber = "v1.1.0";
 
 // Pin definitions
 #define BUTTON_1 26
@@ -25,6 +25,9 @@ String buildNumber = "v1.0.8";
 #define MATRIX_HEIGHT 8
 #define ICON_WIDTH 8
 #define TEXT_WIDTH 24
+
+// Screen configuration
+#define MAX_SCREENS 5
 
 // Battery configuration
 #define BATTERY_MIN_VOLTAGE 3.0  // Minimum battery voltage (empty)
@@ -51,15 +54,33 @@ String deviceName = "";
 String deviceID = "";
 String ipAddress = "";
 
-// API Configuration
-String apiEndpoint = "";
-String apiKey = "";
-String apiHeaderName = "APIKey";
-String jsonPath = "";
-String displayPrefix = "";
-String displaySuffix = "";
-int pollingInterval = 60; // seconds
-bool scrollEnabled = true; // true = scroll, false = static display
+// Screen data structure
+struct Screen {
+  String name;
+  String apiEndpoint;
+  String apiKey;
+  String apiHeaderName;
+  String jsonPath;
+  String displayPrefix;
+  String displaySuffix;
+  int pollingInterval;
+  bool scrollEnabled;
+  String iconData;
+  // Runtime (not persisted)
+  bool iconEnabled;
+  uint16_t iconPixels[64];
+  String currentValue;
+  String lastError;
+  unsigned long lastAPICall;
+  bool apiConfigured;
+};
+
+Screen screens[MAX_SCREENS];
+int numScreens = 0;
+int activeScreen = 0;
+bool autoRotate = false;
+int rotateInterval = 10; // seconds between auto-rotation
+unsigned long lastRotateTime = 0;
 
 // Brightness configuration
 bool autoBrightness = false; // false = manual, true = auto (light sensor)
@@ -75,17 +96,6 @@ const unsigned long batteryUpdateInterval = 60000; // Update battery every 60 se
 bool showBatteryRequested = false;
 unsigned long batteryDisplayTime = 0;
 const unsigned long batteryDisplayDuration = 3000; // Show battery for 3 seconds
-
-// Icon configuration
-String iconData = ""; // JSON array format: [[r,g,b],[r,g,b],...]
-bool iconEnabled = false;
-uint16_t iconPixels[64]; // 8x8 icon in RGB565 format
-
-// API State
-String currentValue = "---";
-String lastError = "";
-unsigned long lastAPICall = 0;
-bool apiConfigured = false;
 
 // Authentication
 String adminPassword = "ulanzitc001"; // Default password
@@ -230,15 +240,16 @@ void setup() {
   
   displayScrollText("READY", matrix.Color(0, 255, 255));
   
-  // Poll API immediately if configured
-  if (apiConfigured) {
-    Serial.println("Performing initial API poll...");
-    pollAPI();
-    lastAPICall = millis();
+  // Poll active screen immediately if configured
+  if (numScreens > 0 && screens[activeScreen].apiConfigured) {
+    Serial.println("Performing initial API poll for active screen...");
+    pollScreenAPI(activeScreen);
+    screens[activeScreen].lastAPICall = millis();
   }
-  
-  // Reset scroll position
+
+  // Reset scroll position and auto-rotate timer
   scrollX = MATRIX_WIDTH;
+  lastRotateTime = millis();
 }
 
 void loop() {
@@ -262,13 +273,23 @@ void loop() {
     showBatteryRequested = false;
     scrollX = MATRIX_WIDTH; // Reset scroll for normal display
   }
-  
-  // Poll API if configured
-  if (apiConfigured && (millis() - lastAPICall > (pollingInterval * 1000))) {
-    pollAPI();
-    lastAPICall = millis();
+
+  // Auto-rotate screens
+  if (autoRotate && numScreens > 1 && !showBatteryRequested) {
+    if (millis() - lastRotateTime > (unsigned long)(rotateInterval * 1000)) {
+      nextScreen();
+      lastRotateTime = millis();
+    }
   }
-  
+
+  // Poll all configured screens at their intervals
+  for (int i = 0; i < numScreens; i++) {
+    if (screens[i].apiConfigured && (millis() - screens[i].lastAPICall > (unsigned long)(screens[i].pollingInterval * 1000))) {
+      pollScreenAPI(i);
+      screens[i].lastAPICall = millis();
+    }
+  }
+
   // Continuously scroll the current value or battery info
   if (millis() - lastScrollUpdate > scrollDelay) {
     if (showBatteryRequested) {
@@ -278,7 +299,7 @@ void loop() {
     }
     lastScrollUpdate = millis();
   }
-  
+
   delay(10);
 }
 
@@ -376,14 +397,15 @@ void scrollBatteryDisplay() {
   matrix.fillScreen(0);
   matrix.setTextColor(color);
   
-  if (scrollEnabled) {
+  bool useScroll = (numScreens > 0) ? screens[activeScreen].scrollEnabled : true;
+  if (useScroll) {
     // Scrolling mode
     int16_t textWidth = batteryText.length() * 6;
-    
+
     matrix.setCursor(scrollX, 0);
     matrix.print(batteryText);
     matrix.show();
-    
+
     scrollX--;
     if (scrollX < -textWidth) {
       scrollX = MATRIX_WIDTH;
@@ -394,7 +416,7 @@ void scrollBatteryDisplay() {
     uint16_t w, h;
     matrix.getTextBounds(batteryText.c_str(), 0, 0, &x1, &y1, &w, &h);
     int16_t centerX = (MATRIX_WIDTH - w) / 2;
-    
+
     matrix.setCursor(centerX, 0);
     matrix.print(batteryText);
     matrix.show();
@@ -415,73 +437,152 @@ void showBatteryOnDisplay() {
 
 void loadConfiguration() {
   preferences.begin("tc001", false);
-  
-  apiEndpoint = preferences.getString("apiUrl", "");
-  apiKey = preferences.getString("apiKey", "");
-  apiHeaderName = preferences.getString("apiHeader", "APIKey");
-  jsonPath = preferences.getString("jsonPath", "");
-  displayPrefix = preferences.getString("prefix", "");
-  displaySuffix = preferences.getString("suffix", "");
-  pollingInterval = preferences.getInt("interval", 60);
-  scrollEnabled = preferences.getBool("scroll", true);
-  iconData = preferences.getString("iconData", "");
+
+  // Load global settings
   autoBrightness = preferences.getBool("autoBrightness", false);
   manualBrightness = preferences.getInt("brightness", 40);
   adminPassword = preferences.getString("adminPassword", "ulanzitc001");
+  autoRotate = preferences.getBool("autoRotate", false);
+  rotateInterval = preferences.getInt("rotateIntv", 10);
+  numScreens = preferences.getInt("numScreens", 0);
+  activeScreen = preferences.getInt("activeScr", 0);
+
+  // Migration from old single-screen format
+  if (numScreens == 0) {
+    String oldEndpoint = preferences.getString("apiUrl", "");
+    if (oldEndpoint.length() > 0) {
+      Serial.println("Migrating old single-screen config to multi-screen format...");
+      screens[0].name = "Screen 1";
+      screens[0].apiEndpoint = oldEndpoint;
+      screens[0].apiKey = preferences.getString("apiKey", "");
+      screens[0].apiHeaderName = preferences.getString("apiHeader", "APIKey");
+      screens[0].jsonPath = preferences.getString("jsonPath", "");
+      screens[0].displayPrefix = preferences.getString("prefix", "");
+      screens[0].displaySuffix = preferences.getString("suffix", "");
+      screens[0].pollingInterval = preferences.getInt("interval", 60);
+      screens[0].scrollEnabled = preferences.getBool("scroll", true);
+      screens[0].iconData = preferences.getString("iconData", "");
+      numScreens = 1;
+      activeScreen = 0;
+
+      // Remove old keys
+      preferences.remove("apiUrl");
+      preferences.remove("apiKey");
+      preferences.remove("apiHeader");
+      preferences.remove("jsonPath");
+      preferences.remove("prefix");
+      preferences.remove("suffix");
+      preferences.remove("interval");
+      preferences.remove("scroll");
+      preferences.remove("iconData");
+
+      // Save in new format
+      preferences.putInt("numScreens", numScreens);
+      preferences.putInt("activeScr", activeScreen);
+      saveScreenToPrefs(0);
+
+      Serial.println("Migration complete");
+    }
+  }
+
+  // Load all screens
+  for (int i = 0; i < numScreens; i++) {
+    String idx = String(i);
+    screens[i].name = preferences.getString(("s" + idx + "name").c_str(), "Screen " + String(i + 1));
+    screens[i].apiEndpoint = preferences.getString(("s" + idx + "url").c_str(), "");
+    screens[i].apiKey = preferences.getString(("s" + idx + "key").c_str(), "");
+    screens[i].apiHeaderName = preferences.getString(("s" + idx + "hdr").c_str(), "APIKey");
+    screens[i].jsonPath = preferences.getString(("s" + idx + "path").c_str(), "");
+    screens[i].displayPrefix = preferences.getString(("s" + idx + "pfx").c_str(), "");
+    screens[i].displaySuffix = preferences.getString(("s" + idx + "sfx").c_str(), "");
+    screens[i].pollingInterval = preferences.getInt(("s" + idx + "intv").c_str(), 60);
+    screens[i].scrollEnabled = preferences.getBool(("s" + idx + "scrl").c_str(), true);
+    screens[i].iconData = preferences.getString(("s" + idx + "icon").c_str(), "");
+
+    // Initialize runtime state
+    screens[i].currentValue = "---";
+    screens[i].lastError = "";
+    screens[i].lastAPICall = 0;
+    screens[i].apiConfigured = (screens[i].apiEndpoint.length() > 0 && screens[i].jsonPath.length() > 0);
+    screens[i].iconEnabled = false;
+
+    if (screens[i].iconData.length() > 0) {
+      parseIconData(screens[i].iconData, screens[i].iconPixels, screens[i].iconEnabled);
+    }
+  }
 
   preferences.end();
-  
-  apiConfigured = (apiEndpoint.length() > 0 && jsonPath.length() > 0);
-  
+
+  // Validate activeScreen
+  if (activeScreen >= numScreens && numScreens > 0) activeScreen = 0;
+  if (numScreens == 0) activeScreen = 0;
+
   // Apply brightness setting
   if (autoBrightness) {
-    updateBrightness(); // Read sensor and set brightness
+    updateBrightness();
   } else {
     matrix.setBrightness(manualBrightness);
   }
-  
-  // Parse icon data if present
-  if (iconData.length() > 0) {
-    parseIconData(iconData);
-  }
-  
-  if (apiConfigured) {
-    Serial.println("API Configuration loaded:");
-    Serial.println("  Endpoint: " + apiEndpoint);
-    Serial.println("  Header: " + apiHeaderName);
-    Serial.println("  JSON Path: " + jsonPath);
-    Serial.println("  Prefix: " + displayPrefix);
-    Serial.println("  Suffix: " + displaySuffix);
-    Serial.println("  Interval: " + String(pollingInterval) + "s");
-    Serial.println("  Scroll: " + String(scrollEnabled ? "Yes" : "No"));
-    Serial.println("  Auto Brightness: " + String(autoBrightness ? "Yes" : "No"));
-    if (!autoBrightness) {
-      Serial.println("  Manual Brightness: " + String(manualBrightness));
-    }
-    Serial.println("  Icon: " + String(iconEnabled ? "Enabled" : "Disabled"));
-  } else {
-    Serial.println("API not configured yet");
+
+  Serial.println("Configuration loaded:");
+  Serial.println("  Screens: " + String(numScreens));
+  Serial.println("  Active: " + String(activeScreen));
+  Serial.println("  Auto Rotate: " + String(autoRotate ? "Yes" : "No"));
+  Serial.println("  Rotate Interval: " + String(rotateInterval) + "s");
+  for (int i = 0; i < numScreens; i++) {
+    Serial.println("  Screen " + String(i) + ": " + screens[i].name);
+    Serial.println("    Endpoint: " + screens[i].apiEndpoint);
+    Serial.println("    Configured: " + String(screens[i].apiConfigured ? "Yes" : "No"));
   }
 }
 
-void saveAPIConfiguration() {
+void saveScreenToPrefs(int index) {
+  // Assumes preferences namespace is already open
+  String idx = String(index);
+  preferences.putString(("s" + idx + "name").c_str(), screens[index].name);
+  preferences.putString(("s" + idx + "url").c_str(), screens[index].apiEndpoint);
+  preferences.putString(("s" + idx + "key").c_str(), screens[index].apiKey);
+  preferences.putString(("s" + idx + "hdr").c_str(), screens[index].apiHeaderName);
+  preferences.putString(("s" + idx + "path").c_str(), screens[index].jsonPath);
+  preferences.putString(("s" + idx + "pfx").c_str(), screens[index].displayPrefix);
+  preferences.putString(("s" + idx + "sfx").c_str(), screens[index].displaySuffix);
+  preferences.putInt(("s" + idx + "intv").c_str(), screens[index].pollingInterval);
+  preferences.putBool(("s" + idx + "scrl").c_str(), screens[index].scrollEnabled);
+  preferences.putString(("s" + idx + "icon").c_str(), screens[index].iconData);
+}
+
+void removeScreenFromPrefs(int index) {
+  // Assumes preferences namespace is already open
+  String idx = String(index);
+  preferences.remove(("s" + idx + "name").c_str());
+  preferences.remove(("s" + idx + "url").c_str());
+  preferences.remove(("s" + idx + "key").c_str());
+  preferences.remove(("s" + idx + "hdr").c_str());
+  preferences.remove(("s" + idx + "path").c_str());
+  preferences.remove(("s" + idx + "pfx").c_str());
+  preferences.remove(("s" + idx + "sfx").c_str());
+  preferences.remove(("s" + idx + "intv").c_str());
+  preferences.remove(("s" + idx + "scrl").c_str());
+  preferences.remove(("s" + idx + "icon").c_str());
+}
+
+void saveAllConfiguration() {
   preferences.begin("tc001", false);
 
-  preferences.putString("apiUrl", apiEndpoint);
-  preferences.putString("apiKey", apiKey);
-  preferences.putString("apiHeader", apiHeaderName);
-  preferences.putString("jsonPath", jsonPath);
-  preferences.putString("prefix", displayPrefix);
-  preferences.putString("suffix", displaySuffix);
-  preferences.putInt("interval", pollingInterval);
-  preferences.putBool("scroll", scrollEnabled);
-  preferences.putString("iconData", iconData);
   preferences.putBool("autoBrightness", autoBrightness);
   preferences.putInt("brightness", manualBrightness);
+  preferences.putString("adminPassword", adminPassword);
+  preferences.putBool("autoRotate", autoRotate);
+  preferences.putInt("rotateIntv", rotateInterval);
+  preferences.putInt("numScreens", numScreens);
+  preferences.putInt("activeScr", activeScreen);
+
+  for (int i = 0; i < numScreens; i++) {
+    saveScreenToPrefs(i);
+  }
 
   preferences.end();
-
-  Serial.println("Configuration saved");
+  Serial.println("All configuration saved");
 }
 
 // HTML escape function to prevent HTML injection and attribute breaking
@@ -596,8 +697,10 @@ void checkButtons() {
             // Button 2 solo - Manual API refresh after 1 second
             if (holdTime >= 1000) {
               Serial.println("Manual API refresh triggered (1s hold)");
-              pollAPI();
-              lastAPICall = millis();
+              if (numScreens > 0 && screens[activeScreen].apiConfigured) {
+                pollScreenAPI(activeScreen);
+                screens[activeScreen].lastAPICall = millis();
+              }
               comboActionExecuted = true;
             }
             break;
@@ -609,13 +712,21 @@ void checkButtons() {
       }
     }
   } else {
-    // No buttons pressed - handle release events if needed
+    // No buttons pressed - handle release events
     if (currentCombo != COMBO_NONE) {
       unsigned long holdTime = millis() - comboPressStartTime;
       Serial.println("Button released after " + String(holdTime) + "ms");
 
-      // Handle short press actions here if needed
-      // For example, if btn2 was released before 1 second, could do something else
+      // Short press actions (only if no long press action was executed)
+      if (!comboActionExecuted) {
+        if (currentCombo == COMBO_BTN1 && holdTime < 500) {
+          Serial.println("Short press Button 1 - previous screen");
+          prevScreen();
+        } else if (currentCombo == COMBO_BTN3 && holdTime < 500) {
+          Serial.println("Short press Button 3 - next screen");
+          nextScreen();
+        }
+      }
 
       // Reset state
       currentCombo = COMBO_NONE;
@@ -660,7 +771,7 @@ void configModeCallback(WiFiManager *myWiFiManager) {
   inConfigMode = true;
   configModeMessage = "CONFIG: " + String(myWiFiManager->getConfigPortalSSID());
   
-  // Create task for continuous display updates
+  // Create task for continuous display updates (core 1 to avoid WiFi task starvation on core 0)
   xTaskCreatePinnedToCore(
     displayUpdateTask,
     "DisplayTask",
@@ -668,91 +779,125 @@ void configModeCallback(WiFiManager *myWiFiManager) {
     NULL,
     1,
     &displayTaskHandle,
-    0
+    1
   );
   
   Serial.println("Display update task created");
-  currentValue = configModeMessage;
   scrollX = MATRIX_WIDTH;
 }
 
-void pollAPI() {
-  if (!apiConfigured) {
-    return;
-  }
-  
+// ============================================
+// Screen Navigation Functions
+// ============================================
+
+void nextScreen() {
+  if (numScreens <= 1) return;
+  activeScreen = (activeScreen + 1) % numScreens;
+  onScreenSwitch();
+}
+
+void prevScreen() {
+  if (numScreens <= 1) return;
+  activeScreen = (activeScreen - 1 + numScreens) % numScreens;
+  onScreenSwitch();
+}
+
+void switchToScreen(int index) {
+  if (index < 0 || index >= numScreens) return;
+  if (index == activeScreen) return;
+  activeScreen = index;
+  onScreenSwitch();
+}
+
+void onScreenSwitch() {
+  scrollX = MATRIX_WIDTH;
+  lastRotateTime = millis(); // Reset auto-rotate timer
+
+  // Save active screen preference
+  preferences.begin("tc001", false);
+  preferences.putInt("activeScr", activeScreen);
+  preferences.end();
+
+  Serial.println("Switched to screen " + String(activeScreen) + ": " + screens[activeScreen].name);
+}
+
+// ============================================
+// API Polling Functions
+// ============================================
+
+void pollScreenAPI(int index) {
+  if (index < 0 || index >= numScreens) return;
+  Screen& scr = screens[index];
+  if (!scr.apiConfigured) return;
+
   const int MAX_RETRIES = 2;
-  const int TIMEOUT_MS = 10000; // 10 second timeout
+  const int TIMEOUT_MS = 10000;
   int retryCount = 0;
   bool success = false;
-  
+
   while (retryCount <= MAX_RETRIES && !success) {
     if (retryCount > 0) {
       Serial.println("Retry attempt " + String(retryCount) + " of " + String(MAX_RETRIES));
-      delay(1000); // Wait 1 second before retry
+      delay(1000);
     }
 
-    // URL encode the endpoint to handle special characters in query parameters
-    String encodedUrl = urlEncode(apiEndpoint);
+    String encodedUrl = urlEncode(scr.apiEndpoint);
 
     HTTPClient http;
     http.begin(encodedUrl);
     http.setTimeout(TIMEOUT_MS);
 
-    if (apiKey.length() > 0) {
-      http.addHeader(apiHeaderName, apiKey);
+    if (scr.apiKey.length() > 0) {
+      http.addHeader(scr.apiHeaderName, scr.apiKey);
     }
 
-    Serial.println("Polling API: " + apiEndpoint);
-    if (encodedUrl != apiEndpoint) {
+    Serial.println("[Screen " + String(index) + "] Polling: " + scr.apiEndpoint);
+    if (encodedUrl != scr.apiEndpoint) {
       Serial.println("Encoded URL: " + encodedUrl);
     }
     int httpCode = http.GET();
-    
+
     if (httpCode > 0) {
       if (httpCode == HTTP_CODE_OK) {
         String payload = http.getString();
-        Serial.println("API Response received (" + String(payload.length()) + " bytes)");
-        
-        String value = extractJSONValue(payload, jsonPath);
-        
+        Serial.println("[Screen " + String(index) + "] Response: " + String(payload.length()) + " bytes");
+
+        String value = extractJSONValue(payload, scr.jsonPath);
+
         if (value.length() > 0) {
-          currentValue = displayPrefix + value + displaySuffix;
-          lastError = "";
-          Serial.println("Extracted value: " + value);
-          Serial.println("Display value: " + currentValue);
-          scrollX = MATRIX_WIDTH;
+          scr.currentValue = scr.displayPrefix + value + scr.displaySuffix;
+          scr.lastError = "";
+          Serial.println("[Screen " + String(index) + "] Value: " + scr.currentValue);
+          if (index == activeScreen) {
+            scrollX = MATRIX_WIDTH;
+          }
           success = true;
         } else {
-          currentValue = "PATH ERROR";
-          lastError = "Could not extract value from JSON path";
-          Serial.println("Error: " + lastError);
-          success = true; // Don't retry for JSON path errors
+          scr.currentValue = "PATH ERROR";
+          scr.lastError = "Could not extract value from JSON path";
+          success = true;
         }
       } else {
-        currentValue = "HTTP " + String(httpCode);
-        lastError = "HTTP error: " + String(httpCode);
-        Serial.println("HTTP error: " + String(httpCode));
-        success = true; // Don't retry for HTTP errors (4xx, 5xx)
+        scr.currentValue = "HTTP " + String(httpCode);
+        scr.lastError = "HTTP error: " + String(httpCode);
+        success = true;
       }
     } else {
-      // Network/timeout error - these we should retry
       String errorMsg = http.errorToString(httpCode);
-      Serial.println("Connection failed: " + errorMsg);
-      
+      Serial.println("[Screen " + String(index) + "] Connection failed: " + errorMsg);
+
       if (retryCount == MAX_RETRIES) {
-        // Final attempt failed
-        currentValue = "CONN FAIL";
-        lastError = errorMsg;
+        scr.currentValue = "CONN FAIL";
+        scr.lastError = errorMsg;
       }
     }
-    
+
     http.end();
     retryCount++;
   }
-  
+
   if (!success) {
-    Serial.println("API call failed after " + String(MAX_RETRIES + 1) + " attempts");
+    Serial.println("[Screen " + String(index) + "] Failed after " + String(MAX_RETRIES + 1) + " attempts");
   }
 }
 
@@ -874,104 +1019,131 @@ String extractJSONValue(const String& json, const String& path) {
 
 void scrollCurrentValue() {
   matrix.fillScreen(0);
-  
+
+  // Handle config mode
+  if (inConfigMode) {
+    matrix.setTextColor(matrix.Color(255, 165, 0));
+    int16_t textWidth = configModeMessage.length() * 6;
+    matrix.setCursor(scrollX, 0);
+    matrix.print(configModeMessage);
+    matrix.show();
+    scrollX--;
+    if (scrollX < -textWidth) scrollX = MATRIX_WIDTH;
+    return;
+  }
+
+  // No screens configured
+  if (numScreens == 0) {
+    matrix.setTextColor(matrix.Color(255, 165, 0));
+    String msg = "NO API";
+    int16_t x1, y1;
+    uint16_t w, h;
+    matrix.getTextBounds(msg.c_str(), 0, 0, &x1, &y1, &w, &h);
+    matrix.setCursor((MATRIX_WIDTH - w) / 2, 0);
+    matrix.print(msg);
+    matrix.show();
+    return;
+  }
+
+  Screen& scr = screens[activeScreen];
+
   uint16_t color;
-  if (lastError.length() > 0) {
+  if (scr.lastError.length() > 0) {
     color = matrix.Color(255, 0, 0);
   } else {
     color = matrix.Color(0, 255, 0);
   }
   matrix.setTextColor(color);
-  
-  if (scrollEnabled) {
-    int iconOffset = iconEnabled ? (ICON_WIDTH + 1) : 0;
-    int16_t textWidth = currentValue.length() * 6;
-    
-    if (iconEnabled && scrollX < ICON_WIDTH) {
+
+  if (scr.scrollEnabled) {
+    int iconOffset = scr.iconEnabled ? (ICON_WIDTH + 1) : 0;
+    int16_t textWidth = scr.currentValue.length() * 6;
+
+    if (scr.iconEnabled && scrollX < ICON_WIDTH) {
       for (int y = 0; y < 8; y++) {
         for (int x = 0; x < ICON_WIDTH; x++) {
           if (scrollX + x >= 0 && scrollX + x < MATRIX_WIDTH) {
-            matrix.drawPixel(scrollX + x, y, iconPixels[y * 8 + x]);
+            matrix.drawPixel(scrollX + x, y, scr.iconPixels[y * 8 + x]);
           }
         }
       }
     }
-    
+
     matrix.setCursor(scrollX + iconOffset, 0);
-    matrix.print(currentValue);
+    matrix.print(scr.currentValue);
     matrix.show();
-    
+
     scrollX--;
     if (scrollX < -(textWidth + iconOffset)) {
       scrollX = MATRIX_WIDTH;
     }
   } else {
-    int displayWidth = iconEnabled ? TEXT_WIDTH : MATRIX_WIDTH;
-    int xOffset = iconEnabled ? ICON_WIDTH : 0;
-    
-    if (iconEnabled) {
+    int displayWidth = scr.iconEnabled ? TEXT_WIDTH : MATRIX_WIDTH;
+    int xOffset = scr.iconEnabled ? ICON_WIDTH : 0;
+
+    if (scr.iconEnabled) {
       for (int y = 0; y < 8; y++) {
         for (int x = 0; x < 8; x++) {
-          matrix.drawPixel(x, y, iconPixels[y * 8 + x]);
+          matrix.drawPixel(x, y, scr.iconPixels[y * 8 + x]);
         }
       }
     }
-    
+
     int16_t x1, y1;
     uint16_t w, h;
-    matrix.getTextBounds(currentValue.c_str(), 0, 0, &x1, &y1, &w, &h);
-    
+    matrix.getTextBounds(scr.currentValue.c_str(), 0, 0, &x1, &y1, &w, &h);
+
     int16_t centerX = xOffset + (displayWidth - w) / 2;
     if (centerX < xOffset) centerX = xOffset;
-    
+
     matrix.setCursor(centerX, 0);
-    matrix.print(currentValue);
+    matrix.print(scr.currentValue);
     matrix.show();
   }
 }
 
-void parseIconData(const String& jsonData) {
+void parseIconData(const String& jsonData, uint16_t pixelArray[64], bool& enabled) {
   DynamicJsonDocument doc(2048);
   DeserializationError error = deserializeJson(doc, jsonData);
-  
+
   if (error) {
     Serial.print("Icon parse error: ");
     Serial.println(error.c_str());
-    iconEnabled = false;
+    enabled = false;
     return;
   }
-  
+
   if (!doc.is<JsonArray>()) {
     Serial.println("Icon data is not an array");
-    iconEnabled = false;
+    enabled = false;
     return;
   }
-  
+
   JsonArray pixels = doc.as<JsonArray>();
   if (pixels.size() != 64) {
     Serial.print("Icon must have 64 pixels, got: ");
     Serial.println(pixels.size());
-    iconEnabled = false;
+    enabled = false;
     return;
   }
-  
+
   for (int i = 0; i < 64; i++) {
     JsonArray pixel = pixels[i];
     if (!pixel || pixel.size() < 3) {
       Serial.print("Invalid pixel at index: ");
       Serial.println(i);
-      iconEnabled = false;
+      enabled = false;
       return;
     }
-    
+
     uint8_t r = pixel[0];
     uint8_t g = pixel[1];
     uint8_t b = pixel[2];
-    
-    iconPixels[i] = matrix.Color(r, g, b);
+
+    pixelArray[i] = matrix.Color(r, g, b);
   }
-  
-  iconEnabled = true;
+
+  enabled = true;
   Serial.println("Icon parsed successfully (64 pixels)");
 }
 
@@ -987,6 +1159,36 @@ bool checkAuth() {
   }
   isAuthenticated = false;
   return false;
+}
+
+// Shared CSS for all pages (minified to save flash)
+const char COMMON_CSS[] PROGMEM =
+  "body{font-family:Arial,sans-serif;margin:20px;background:#f0f0f0}"
+  "h1{color:#333;border-bottom:2px solid #4CAF50;padding-bottom:10px}"
+  "h2{color:#555;margin-top:20px}"
+  ".container{max-width:600px;margin:0 auto;background:#fff;padding:20px;border-radius:10px;box-shadow:0 2px 10px rgba(0,0,0,.1)}"
+  ".button{display:inline-block;background:#4CAF50;color:#fff;padding:10px 20px;text-decoration:none;border-radius:5px;margin:5px;border:none;cursor:pointer}"
+  ".button:hover{background:#45a049}.button.secondary{background:#008CBA}.button.danger{background:#f44336}"
+  ".button.small{padding:6px 12px;font-size:12px}"
+  "label{display:block;margin-top:15px;font-weight:bold;color:#555}"
+  "input[type='text'],input[type='password'],input[type='number'],textarea{width:100%;padding:10px;margin-top:5px;border:1px solid #ddd;border-radius:4px;box-sizing:border-box}"
+  "textarea{min-height:60px;font-family:monospace}"
+  "input[type='checkbox']{margin-top:10px}.checkbox-label{display:inline-block;margin-left:8px;font-weight:normal}"
+  ".help{font-size:12px;color:#666;margin-top:5px;font-style:italic}"
+  ".info-box{background:#e3f2fd;border-left:4px solid #2196F3;padding:15px;margin:15px 0;border-radius:5px}"
+  ".warning-box{background:#fff3cd;border-left:4px solid #ffc107;padding:15px;margin:15px 0;border-radius:5px}"
+  ".status{padding:15px;border-radius:5px;margin:10px 0}"
+  ".status.ok,.status.success{background:#d4edda;color:#155724;border:1px solid #c3e6cb}"
+  ".status.error{background:#f8d7da;color:#721c24;border:1px solid #f5c6cb}"
+  ".status.warning{background:#fff3cd;color:#856404;border:1px solid #ffeaa7}"
+  ".icon-preview{margin-top:10px}.icon-pixel{width:15px;height:15px;display:inline-block;border:1px solid #ddd}";
+
+String htmlHeader(const String& title) {
+  String html = "<!DOCTYPE html><html><head><meta name='viewport' content='width=device-width,initial-scale=1'>";
+  if (title.length() > 0) html += "<title>" + title + " - " + deviceName + "</title>";
+  html += "<style>";
+  html += COMMON_CSS;
+  return html;
 }
 
 void handleLogin() {
@@ -1066,28 +1268,13 @@ bool requireAuth() {
 void handleBackupRestorePage() {
   if (!requireAuth()) return;
 
-  String html = "<!DOCTYPE html><html><head>";
-  html += "<meta name='viewport' content='width=device-width, initial-scale=1'>";
-  html += "<title>Backup & Restore - " + deviceName + "</title>";
-  html += "<style>";
-  html += "body { font-family: Arial, sans-serif; margin: 20px; background: #f0f0f0; }";
-  html += ".container { max-width: 700px; margin: 0 auto; background: white; padding: 20px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }";
-  html += "h1 { color: #333; border-bottom: 2px solid #4CAF50; padding-bottom: 10px; }";
-  html += "h2 { color: #555; margin-top: 25px; }";
-  html += ".info-box { background: #e3f2fd; border-left: 4px solid #2196F3; padding: 15px; margin: 15px 0; border-radius: 5px; }";
-  html += ".warning-box { background: #fff3cd; border-left: 4px solid #ffc107; padding: 15px; margin: 15px 0; border-radius: 5px; }";
-  html += ".button { display: inline-block; background: #4CAF50; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; margin: 5px; border: none; cursor: pointer; font-size: 16px; }";
-  html += ".button:hover { background: #45a049; }";
-  html += ".button.secondary { background: #008CBA; }";
-  html += ".button.secondary:hover { background: #007399; }";
-  html += ".status { padding: 15px; border-radius: 5px; margin: 15px 0; display: none; }";
-  html += ".status.success { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; display: block; }";
-  html += ".status.error { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; display: block; }";
-  html += "ul { line-height: 1.8; }";
-  html += "input[type='file'] { padding: 10px; margin: 10px 0; }";
-  html += ".section { margin: 30px 0; padding: 20px; background: #f9f9f9; border-radius: 8px; }";
-  html += "</style>";
-  html += "</head><body>";
+  String html = htmlHeader("Backup & Restore");
+  html += ".container{max-width:700px}";
+  html += ".button{padding:12px 24px;font-size:16px}.button.secondary:hover{background:#007399}";
+  html += ".status{display:none}.status.success,.status.error{display:block}";
+  html += "ul{line-height:1.8}input[type='file']{padding:10px;margin:10px 0}";
+  html += ".section{margin:30px 0;padding:20px;background:#f9f9f9;border-radius:8px}";
+  html += "</style></head><body>";
 
   html += "<div class='container'>";
   html += "<h1>Backup & Restore Configuration</h1>";
@@ -1103,9 +1290,8 @@ void handleBackupRestorePage() {
   html += "<h2>Backup Configuration</h2>";
   html += "<p>Create a backup file containing your current settings:</p>";
   html += "<ul>";
-  html += "<li>API endpoint URL and configuration</li>";
-  html += "<li>Display settings (prefix, suffix, polling interval)</li>";
-  html += "<li>Icon data and scroll settings</li>";
+  html += "<li>All screen configurations (endpoints, display settings, icons)</li>";
+  html += "<li>Auto-rotation settings</li>";
   html += "<li>Brightness preferences</li>";
   html += "</ul>";
   html += "<div class='warning-box'>";
@@ -1231,26 +1417,32 @@ void handleBackupRestorePage() {
 void handleBackupDownload() {
   if (!requireAuth()) return;
 
-  // Create JSON backup (excluding sensitive data)
-  DynamicJsonDocument doc(2048);
+  DynamicJsonDocument doc(16384);
 
   doc["version"] = buildNumber;
   doc["device_id"] = deviceID;
-  doc["backup_date"] = ""; // Client will set this
+  doc["backup_date"] = "";
 
-  // API Configuration (excluding API key for security)
-  doc["api_endpoint"] = apiEndpoint;
-  doc["api_header_name"] = apiHeaderName;
-  doc["json_path"] = jsonPath;
-  doc["display_prefix"] = displayPrefix;
-  doc["display_suffix"] = displaySuffix;
-  doc["polling_interval"] = pollingInterval;
-
-  // Display Settings
-  doc["scroll_enabled"] = scrollEnabled;
-  doc["icon_data"] = iconData;
+  // Global settings
   doc["auto_brightness"] = autoBrightness;
   doc["manual_brightness"] = manualBrightness;
+  doc["auto_rotate"] = autoRotate;
+  doc["rotate_interval"] = rotateInterval;
+
+  // Screens array (excluding API keys for security)
+  JsonArray screensArr = doc.createNestedArray("screens");
+  for (int i = 0; i < numScreens; i++) {
+    JsonObject s = screensArr.createNestedObject();
+    s["name"] = screens[i].name;
+    s["api_endpoint"] = screens[i].apiEndpoint;
+    s["api_header_name"] = screens[i].apiHeaderName;
+    s["json_path"] = screens[i].jsonPath;
+    s["display_prefix"] = screens[i].displayPrefix;
+    s["display_suffix"] = screens[i].displaySuffix;
+    s["polling_interval"] = screens[i].pollingInterval;
+    s["scroll_enabled"] = screens[i].scrollEnabled;
+    s["icon_data"] = screens[i].iconData;
+  }
 
   String output;
   serializeJson(doc, output);
@@ -1262,8 +1454,7 @@ void handleBackupDownload() {
 void handleBackupRestore() {
   if (!requireAuth()) return;
 
-  // Parse the JSON body
-  DynamicJsonDocument doc(2048);
+  DynamicJsonDocument doc(16384);
   DeserializationError error = deserializeJson(doc, server.arg("plain"));
 
   if (error) {
@@ -1273,37 +1464,64 @@ void handleBackupRestore() {
     return;
   }
 
-  // Restore configuration
-  if (doc.containsKey("api_endpoint")) apiEndpoint = doc["api_endpoint"].as<String>();
-  if (doc.containsKey("api_header_name")) apiHeaderName = doc["api_header_name"].as<String>();
-  if (doc.containsKey("json_path")) jsonPath = doc["json_path"].as<String>();
-  if (doc.containsKey("display_prefix")) displayPrefix = doc["display_prefix"].as<String>();
-  if (doc.containsKey("display_suffix")) displaySuffix = doc["display_suffix"].as<String>();
-  if (doc.containsKey("polling_interval")) pollingInterval = doc["polling_interval"];
-  if (doc.containsKey("scroll_enabled")) scrollEnabled = doc["scroll_enabled"];
-  if (doc.containsKey("icon_data")) {
-    iconData = doc["icon_data"].as<String>();
-    if (iconData.length() > 0) {
-      parseIconData(iconData);
-    } else {
-      iconEnabled = false;
-    }
-  }
+  // Global settings
   if (doc.containsKey("auto_brightness")) autoBrightness = doc["auto_brightness"];
   if (doc.containsKey("manual_brightness")) manualBrightness = doc["manual_brightness"];
+  if (doc.containsKey("auto_rotate")) autoRotate = doc["auto_rotate"];
+  if (doc.containsKey("rotate_interval")) rotateInterval = doc["rotate_interval"];
 
-  // Save to preferences
-  saveAPIConfiguration();
+  // Check for new multi-screen format
+  if (doc.containsKey("screens")) {
+    JsonArray screensArr = doc["screens"].as<JsonArray>();
 
-  // Update API configured flag
-  apiConfigured = (apiEndpoint.length() > 0 && jsonPath.length() > 0);
+    // Clear existing screens from NVS
+    preferences.begin("tc001", false);
+    for (int i = 0; i < numScreens; i++) {
+      removeScreenFromPrefs(i);
+    }
+    preferences.end();
+
+    numScreens = min((int)screensArr.size(), MAX_SCREENS);
+    activeScreen = 0;
+
+    for (int i = 0; i < numScreens; i++) {
+      JsonObject s = screensArr[i];
+      String defaultName = "Screen " + String(i + 1);
+      screens[i].name = s["name"] | defaultName.c_str();
+      screens[i].apiEndpoint = s["api_endpoint"] | "";
+      screens[i].apiHeaderName = s["api_header_name"] | "APIKey";
+      screens[i].jsonPath = s["json_path"] | "";
+      screens[i].displayPrefix = s["display_prefix"] | "";
+      screens[i].displaySuffix = s["display_suffix"] | "";
+      screens[i].pollingInterval = s["polling_interval"] | 60;
+      screens[i].scrollEnabled = s["scroll_enabled"] | true;
+      screens[i].iconData = s["icon_data"] | "";
+      screens[i].apiConfigured = (screens[i].apiEndpoint.length() > 0 && screens[i].jsonPath.length() > 0);
+    }
+  } else if (doc.containsKey("api_endpoint")) {
+    // Legacy single-screen backup format
+    numScreens = 1;
+    activeScreen = 0;
+    screens[0].name = "Screen 1";
+    screens[0].apiEndpoint = doc["api_endpoint"] | "";
+    screens[0].apiHeaderName = doc["api_header_name"] | "APIKey";
+    screens[0].jsonPath = doc["json_path"] | "";
+    screens[0].displayPrefix = doc["display_prefix"] | "";
+    screens[0].displaySuffix = doc["display_suffix"] | "";
+    screens[0].pollingInterval = doc["polling_interval"] | 60;
+    screens[0].scrollEnabled = doc["scroll_enabled"] | true;
+    screens[0].iconData = doc["icon_data"] | "";
+    screens[0].apiConfigured = (screens[0].apiEndpoint.length() > 0 && screens[0].jsonPath.length() > 0);
+  }
+
+  // Save everything
+  saveAllConfiguration();
 
   String response = "{\"success\":true,\"message\":\"Configuration restored successfully\"}";
   server.send(200, "application/json", response);
 
   Serial.println("Configuration restored from backup");
 
-  // Restart device after a short delay
   delay(1000);
   ESP.restart();
 }
@@ -1318,8 +1536,11 @@ void setupWebServer() {
 
   // Protected routes (auth required)
   server.on("/", handleRoot);
-  server.on("/config/api", handleAPIConfigPage);
-  server.on("/config/api/save", HTTP_POST, handleSaveAPIConfig);
+  server.on("/screens", handleScreensPage);
+  server.on("/screens/edit", handleScreenEditPage);
+  server.on("/screens/save", HTTP_POST, handleScreenSave);
+  server.on("/screens/delete", handleScreenDelete);
+  server.on("/screens/active", handleScreenSetActive);
   server.on("/config/general", handleGeneralConfig);
   server.on("/config/general/save", HTTP_POST, handleSaveGeneralConfig);
   server.on("/backup", handleBackupRestorePage);
@@ -1333,27 +1554,9 @@ void setupWebServer() {
 void handleRoot() {
   if (!requireAuth()) return;
 
-  String html = "<!DOCTYPE html><html><head>";
-  html += "<meta name='viewport' content='width=device-width, initial-scale=1'>";
-  html += "<style>";
-  html += "body { font-family: Arial, sans-serif; margin: 20px; background: #f0f0f0; }";
-  html += ".container { max-width: 600px; margin: 0 auto; background: white; padding: 20px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }";
-  html += "h1 { color: #333; border-bottom: 2px solid #4CAF50; padding-bottom: 10px; }";
-  html += "h2 { color: #555; margin-top: 20px; }";
-  html += ".info-row { display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #eee; }";
-  html += ".label { font-weight: bold; color: #666; }";
-  html += ".value { color: #333; }";
-  html += ".button { display: inline-block; background: #4CAF50; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; margin: 5px; border: none; cursor: pointer; }";
-  html += ".button:hover { background: #45a049; }";
-  html += ".button.secondary { background: #008CBA; }";
-  html += ".button.danger { background: #f44336; }";
-  html += ".status { padding: 15px; border-radius: 5px; margin: 10px 0; }";
-  html += ".status.ok { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }";
-  html += ".status.error { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }";
-  html += ".status.warning { background: #fff3cd; color: #856404; border: 1px solid #ffeaa7; }";
-  html += "</style>";
-  html += "</head><body>";
-  
+  String html = htmlHeader("");
+  html += ".info-row{display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid #eee}.label{font-weight:bold;color:#666}.value{color:#333}";
+  html += "</style></head><body>";
   html += "<div class='container'>";
   html += "<h1>TC001-Display-" + deviceID + "</h1>";
   
@@ -1367,32 +1570,45 @@ void handleRoot() {
   html += "<div class='info-row'><span class='label'>Battery Level:</span><span class='value' id='batteryPercent'>" + String(batteryPercentage) + "%</span></div>";
   html += "<div class='info-row'><span class='label'>Voltage:</span><span class='value' id='batteryVoltage'>" + String(batteryVoltage, 2) + "V</span></div>";  
   
-  // API Status
-  html += "<h2>API Status</h2>";
-  if (apiConfigured) {
-    html += "<div class='status ok'>";
-    html += "<strong>Configured</strong><br>";
-    html += "Current Value: <strong>" + currentValue + "</strong><br>";
-    html += "Last Update: " + String((millis() - lastAPICall) / 1000) + "s ago";
-    if (lastError.length() > 0) {
-      html += "<br>Last Error: " + lastError;
-    }
+  // Screens Status
+  html += "<h2>Screens Status</h2>";
+  if (numScreens == 0) {
+    html += "<div class='status warning'>";
+    html += "<strong>No Screens Configured</strong><br>";
+    html += "Add a screen to begin monitoring. <a href='/screens/edit'>Add Screen</a>";
     html += "</div>";
   } else {
-    html += "<div class='status warning'>";
-    html += "<strong>Not Configured</strong><br>";
-    html += "Please configure API settings to begin monitoring.";
+    html += "<div class='status ok'>";
+    html += "<strong>Active: " + htmlEscape(screens[activeScreen].name) + " (" + String(activeScreen + 1) + "/" + String(numScreens) + ")</strong><br>";
+    html += "Current Value: <strong>" + htmlEscape(screens[activeScreen].currentValue) + "</strong><br>";
+    if (screens[activeScreen].lastAPICall > 0) {
+      html += "Last Update: " + String((millis() - screens[activeScreen].lastAPICall) / 1000) + "s ago";
+    }
+    if (screens[activeScreen].lastError.length() > 0) {
+      html += "<br>Last Error: " + htmlEscape(screens[activeScreen].lastError);
+    }
     html += "</div>";
+    if (numScreens > 1) {
+      html += "<div style='margin: 10px 0;'>";
+      for (int i = 0; i < numScreens; i++) {
+        String badgeStyle = (i == activeScreen) ? "background:#4CAF50;color:white;" : "background:#ddd;color:#333;";
+        html += "<span style='display:inline-block;padding:4px 10px;margin:2px;border-radius:12px;" + badgeStyle + "font-size:13px;'>";
+        html += htmlEscape(screens[i].name) + ": " + htmlEscape(screens[i].currentValue);
+        html += "</span>";
+      }
+      html += "</div>";
+      html += "<div class='info-row'><span class='label'>Auto-Rotate:</span><span class='value'>" + String(autoRotate ? "Every " + String(rotateInterval) + "s" : "Off") + "</span></div>";
+    }
   }
-  
+
   // Display Settings
   html += "<h2>Display Settings</h2>";
   html += "<div class='info-row'><span class='label'>Brightness:</span><span class='value'>" + String(autoBrightness ? "Auto" : "Manual (" + String(manualBrightness) + ")") + "</span></div>";
-  
+
   // Action Buttons
   html += "<h2>Actions</h2>";
   html += "<button onclick='location.href=\"/config/general\"' class='button'>Config</button>";
-  html += "<button onclick='location.href=\"/config/api\"' class='button'>Configure API</button>";
+  html += "<button onclick='location.href=\"/screens\"' class='button'>Manage Screens</button>";
   html += "<button onclick='location.href=\"/backup\"' class='button secondary'>Backup / Restore</button>";
   html += "<button onclick='location.href=\"/status\"' class='button secondary'>View JSON Status</button>";
   html += "<button onclick='if(confirm(\"Restart Device?\")) location.href=\"/restart\"' class='button secondary'>Restart</button>";
@@ -1415,31 +1631,8 @@ void handleRoot() {
 
 void handleGeneralConfig() {
   if (!requireAuth()) return;
-  String html = "<!DOCTYPE html><html><head>";
-  html += "<meta name='viewport' content='width=device-width, initial-scale=1'>";  
-  html += "<title>General Settings - " + deviceName + "</title>";
-  html += "<style>";
-  html += "body { font-family: Arial, sans-serif; margin: 20px; background: #f0f0f0; }";
-  html += ".container { max-width: 600px; margin: 0 auto; background: white; padding: 20px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }";
-  html += "h1 { color: #333; border-bottom: 2px solid #4CAF50; padding-bottom: 10px; }";
-  html += "label { display: block; margin-top: 15px; font-weight: bold; color: #555; }";
-  html += "input[type='text'], input[type='password'], input[type='number'], textarea { ";
-  html += "width: 100%; padding: 10px; margin-top: 5px; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; }";
-  html += "textarea { min-height: 60px; font-family: monospace; }";
-  html += "input[type='checkbox'] { margin-top: 10px; }";
-  html += ".checkbox-label { display: inline-block; margin-left: 8px; font-weight: normal; }";
-  html += ".button { display: inline-block; background: #4CAF50; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; margin: 5px; border: none; cursor: pointer; }";
-  html += ".button:hover { background: #45a049; }";
-  html += ".button.secondary { background: #008CBA; }";
-  html += ".button.danger { background: #f44336; }";
-  html += ".help { font-size: 12px; color: #666; margin-top: 5px; font-style: italic; }";
-  html += ".icon-preview { margin-top: 10px; }";
-  html += ".icon-pixel { width: 15px; height: 15px; display: inline-block; border: 1px solid #ddd; }";
-  html += ".status { padding: 15px; border-radius: 5px; margin: 10px 0; }";
-  html += ".status.ok { background: #d4edda; color: #155724; }";
-  html += ".status.error { background: #f8d7da; color: #721c24; }";
-  html += "</style>";
-  html += "</head><body>";
+  String html = htmlHeader("General Settings");
+  html += "</style></head><body>";
   html += "<div class='container'>";
   html += "<h1>General Settings</h1>";
     
@@ -1456,6 +1649,18 @@ void handleGeneralConfig() {
   html += "<input type='range' name='brightness' id='brightnessSlider' value='" + String(manualBrightness) + "' min='10' max='255' oninput='updateBrightnessLabel(this.value)'>";
   html += "<span id='brightnessValue'>" + String(manualBrightness) + "</span>";
   html += "<p class='help'>Set brightness level (10-255)</p>";
+  html += "</div>";
+
+  // Auto-rotation section
+  html += "<h2 style='margin-top: 30px;'>Screen Auto-Rotation</h2>";
+
+  html += "<label><input type='checkbox' name='autoRotate' id='autoRotate' onchange='toggleRotateSettings()' " + String(autoRotate ? "checked" : "") + "><span class='checkbox-label'>Auto-Rotate Screens</span></label>";
+  html += "<p class='help'>Automatically cycle through screens at a set interval</p>";
+
+  html += "<div id='rotateGroup' style='display: " + String(autoRotate ? "block" : "none") + ";'>";
+  html += "<label>Rotation Interval (seconds):</label>";
+  html += "<input type='number' name='rotateInterval' value='" + String(rotateInterval) + "' min='3' max='300'>";
+  html += "<p class='help'>How often to switch screens (3-300 seconds)</p>";
   html += "</div>";
 
   // Admin password section
@@ -1480,6 +1685,10 @@ void handleGeneralConfig() {
   html += "}";
   html += "function updateBrightnessLabel(value) {";
   html += "  document.getElementById('brightnessValue').textContent = value;";
+  html += "}";
+  html += "function toggleRotateSettings() {";
+  html += "  const isAuto = document.getElementById('autoRotate').checked;";
+  html += "  document.getElementById('rotateGroup').style.display = isAuto ? 'block' : 'none';";
   html += "}";
   html += "</script>";
 
@@ -1523,6 +1732,19 @@ void handleSaveGeneralConfig() {
     Serial.println("WARNING: No brightness argument received!");
   }
 
+  // Auto-rotation settings
+  autoRotate = server.hasArg("autoRotate");
+  Serial.print("Auto Rotate: ");
+  Serial.println(autoRotate ? "ENABLED" : "DISABLED");
+
+  if (server.hasArg("rotateInterval")) {
+    rotateInterval = server.arg("rotateInterval").toInt();
+    if (rotateInterval < 3) rotateInterval = 3;
+    if (rotateInterval > 300) rotateInterval = 300;
+    Serial.print("Rotate Interval: ");
+    Serial.println(rotateInterval);
+  }
+
   // Check if admin password should be changed
   if (server.hasArg("adminPassword")) {
     String newPassword = server.arg("adminPassword");
@@ -1538,6 +1760,8 @@ void handleSaveGeneralConfig() {
   preferences.putBool("autoBrightness", autoBrightness);
   preferences.putInt("brightness", manualBrightness);
   preferences.putString("adminPassword", adminPassword);
+  preferences.putBool("autoRotate", autoRotate);
+  preferences.putInt("rotateIntv", rotateInterval);
   preferences.end();
   Serial.println("Preferences written successfully");
   
@@ -1557,303 +1781,470 @@ void handleSaveGeneralConfig() {
   server.send(303);
 }
 
-void handleAPIConfigPage() {
+// ============================================
+// Screen Management Web Pages
+// ============================================
+
+void handleScreensPage() {
   if (!requireAuth()) return;
-  String maskedKey = "";
-  if (apiKey.length() > 0) {
-    for (unsigned int i = 0; i < apiKey.length(); i++) {
-      maskedKey += "*";
+
+  String html = htmlHeader("Screens");
+  html += ".container{max-width:700px}";
+  html += ".screen-card{background:#f9f9f9;border:2px solid #e0e0e0;border-radius:8px;padding:15px;margin:10px 0}";
+  html += ".screen-card.active{border-color:#4CAF50;background:#f1f8e9}";
+  html += ".screen-header{display:flex;align-items:center;gap:10px;margin-bottom:8px}";
+  html += ".screen-number{background:#666;color:#fff;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:bold;font-size:14px}";
+  html += ".screen-card.active .screen-number{background:#4CAF50}";
+  html += ".screen-name{font-size:18px;font-weight:bold;color:#333}";
+  html += ".screen-badge{font-size:11px;padding:2px 8px;border-radius:10px;background:#4CAF50;color:#fff}";
+  html += ".screen-detail{color:#666;font-size:13px;margin:4px 0}";
+  html += ".screen-value{font-size:16px;font-weight:bold;color:#333;margin:6px 0}";
+  html += ".screen-actions{margin-top:10px}";
+  html += "</style></head><body>";
+
+  html += "<div class='container'>";
+  html += "<h1>Screen Management</h1>";
+
+  html += "<div class='info-box'>";
+  html += "Configure up to " + String(MAX_SCREENS) + " screens, each with its own API endpoint. ";
+  html += "Use <strong>Button 1</strong> (previous) and <strong>Button 3</strong> (next) on the device to navigate between screens.";
+  html += "</div>";
+
+  // Screen list
+  if (numScreens == 0) {
+    html += "<p style='text-align:center;color:#666;padding:20px;'>No screens configured yet.</p>";
+  }
+
+  for (int i = 0; i < numScreens; i++) {
+    html += "<div class='screen-card" + String(i == activeScreen ? " active" : "") + "'>";
+    html += "<div class='screen-header'>";
+    html += "<span class='screen-number'>" + String(i + 1) + "</span>";
+    html += "<span class='screen-name'>" + htmlEscape(screens[i].name) + "</span>";
+    if (i == activeScreen) {
+      html += "<span class='screen-badge'>Active</span>";
+    }
+    html += "</div>";
+
+    if (screens[i].apiConfigured) {
+      html += "<div class='screen-value'>Value: " + htmlEscape(screens[i].currentValue) + "</div>";
+      String truncUrl = screens[i].apiEndpoint;
+      if (truncUrl.length() > 50) truncUrl = truncUrl.substring(0, 50) + "...";
+      html += "<div class='screen-detail'>Endpoint: " + htmlEscape(truncUrl) + "</div>";
+      html += "<div class='screen-detail'>Path: " + htmlEscape(screens[i].jsonPath) + " | Interval: " + String(screens[i].pollingInterval) + "s</div>";
+    } else {
+      html += "<div class='screen-detail' style='color:#f44336;'>Not configured (missing endpoint or JSON path)</div>";
+    }
+
+    html += "<div class='screen-actions'>";
+    html += "<a href='/screens/edit?id=" + String(i) + "' class='button small'>Edit</a>";
+    if (i != activeScreen) {
+      html += "<a href='/screens/active?id=" + String(i) + "' class='button small secondary'>Set Active</a>";
+    }
+    html += "<a href='#' onclick='if(confirm(\"Delete screen: " + htmlEscape(screens[i].name) + "?\")) location.href=\"/screens/delete?id=" + String(i) + "\"' class='button small danger'>Delete</a>";
+    html += "</div>";
+    html += "</div>";
+  }
+
+  // Add screen button
+  if (numScreens < MAX_SCREENS) {
+    html += "<div style='text-align:center;margin:20px 0;'>";
+    html += "<a href='/screens/edit' class='button'>+ Add Screen</a>";
+    html += "</div>";
+  } else {
+    html += "<p style='text-align:center;color:#666;'>Maximum " + String(MAX_SCREENS) + " screens reached.</p>";
+  }
+
+  html += "<div style='margin-top:20px;'>";
+  html += "<a href='/' class='button secondary'>Back to Home</a>";
+  html += "</div>";
+
+  html += "</div>";
+  html += "</body></html>";
+
+  server.send(200, "text/html", html);
+}
+
+void handleScreenEditPage() {
+  if (!requireAuth()) return;
+
+  int screenIdx = -1;
+  bool isNew = true;
+  String screenName = "Screen " + String(numScreens + 1);
+  String scrEndpoint = "";
+  String scrKey = "";
+  String scrHeader = "APIKey";
+  String scrJsonPath = "";
+  String scrPrefix = "";
+  String scrSuffix = "";
+  int scrInterval = 60;
+  bool scrScroll = true;
+  String scrIconData = "";
+
+  if (server.hasArg("id")) {
+    screenIdx = server.arg("id").toInt();
+    if (screenIdx >= 0 && screenIdx < numScreens) {
+      isNew = false;
+      Screen& scr = screens[screenIdx];
+      screenName = scr.name;
+      scrEndpoint = scr.apiEndpoint;
+      scrKey = scr.apiKey;
+      scrHeader = scr.apiHeaderName;
+      scrJsonPath = scr.jsonPath;
+      scrPrefix = scr.displayPrefix;
+      scrSuffix = scr.displaySuffix;
+      scrInterval = scr.pollingInterval;
+      scrScroll = scr.scrollEnabled;
+      scrIconData = scr.iconData;
+    } else {
+      screenIdx = -1;
     }
   }
-  
-  String html = "<!DOCTYPE html><html><head>";
-  html += "<meta name='viewport' content='width=device-width, initial-scale=1'>";
-  html += "<title>API Settings - " + deviceName + "</title>";  
-  html += "<style>";
-  html += "body { font-family: Arial, sans-serif; margin: 20px; background: #f0f0f0; }";
-  html += ".container { max-width: 600px; margin: 0 auto; background: white; padding: 20px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }";
-  html += "h1 { color: #333; border-bottom: 2px solid #4CAF50; padding-bottom: 10px; }";
-  html += "label { display: block; margin-top: 15px; font-weight: bold; color: #555; }";
-  html += "input[type='text'], input[type='password'], input[type='number'], textarea { ";
-  html += "width: 100%; padding: 10px; margin-top: 5px; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; }";
-  html += "textarea { min-height: 60px; font-family: monospace; }";
-  html += "input[type='checkbox'] { margin-top: 10px; }";
-  html += ".checkbox-label { display: inline-block; margin-left: 8px; font-weight: normal; }";
-  html += ".button { display: inline-block; background: #4CAF50; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; margin: 5px; border: none; cursor: pointer; }";
-  html += ".button:hover { background: #45a049; }";
-  html += ".button.secondary { background: #008CBA; }";
-  html += ".button.danger { background: #f44336; }";
-  html += ".help { font-size: 12px; color: #666; margin-top: 5px; font-style: italic; }";
-  html += ".icon-preview { margin-top: 10px; }";
-  html += ".icon-pixel { width: 15px; height: 15px; display: inline-block; border: 1px solid #ddd; }";
-  html += ".status { padding: 15px; border-radius: 5px; margin: 10px 0; }";
-  html += ".status.ok { background: #d4edda; color: #155724; }";
-  html += ".status.error { background: #f8d7da; color: #721c24; }";
-  html += "</style>";
-  html += "</head><body>";
+
+  String maskedKey = "";
+  if (scrKey.length() > 0) {
+    for (unsigned int i = 0; i < scrKey.length(); i++) maskedKey += "*";
+  }
+
+  String pageTitle = isNew ? "Add Screen" : "Edit Screen: " + screenName;
+
+  String html = htmlHeader(pageTitle);
+  html += "</style></head><body>";
   html += "<div class='container'>";
-  html += "<h1>API Configuration</h1>";
-  
-  html += "<form method='POST' action='/config/api/save' accept-charset='utf-8'>";
-  
+  html += "<h1>" + pageTitle + "</h1>";
+
+  html += "<form method='POST' action='/screens/save' accept-charset='utf-8'>";
+  html += "<input type='hidden' name='id' value='" + String(isNew ? -1 : screenIdx) + "'>";
+
+  html += "<label>Screen Name:</label>";
+  html += "<input type='text' name='name' value='" + htmlEscape(screenName) + "' placeholder='My Dashboard' required>";
+  html += "<p class='help'>A friendly name for this screen (shown when switching)</p>";
+
   html += "<label>API Endpoint URL:</label>";
-  html += "<input type='text' name='apiUrl' value='" + htmlEscape(apiEndpoint) + "' placeholder='https://api.example.com/data' required>";
+  html += "<input type='text' name='apiUrl' value='" + htmlEscape(scrEndpoint) + "' placeholder='https://api.example.com/data' required>";
   html += "<p class='help'>Full URL to your API endpoint</p>";
 
   html += "<label>API Header Name:</label>";
-  html += "<input type='text' name='apiHeader' value='" + htmlEscape(apiHeaderName) + "' placeholder='APIKey'>";
+  html += "<input type='text' name='apiHeader' value='" + htmlEscape(scrHeader) + "' placeholder='APIKey'>";
   html += "<p class='help'>Authentication header name (e.g., APIKey, Authorization, X-API-Key)</p>";
 
   html += "<label>API Key:</label>";
-  html += "<input type='password' name='apiKey' value='" + htmlEscape(apiKey) + "' placeholder='" + (apiKey.length() > 0 ? maskedKey : "your-api-key-here") + "'>";
+  html += "<input type='password' name='apiKey' value='" + htmlEscape(scrKey) + "' placeholder='" + (scrKey.length() > 0 ? maskedKey : "your-api-key-here") + "'>";
   html += "<p class='help'>Your API authentication key</p>";
 
   html += "<label>JSON Path:</label>";
-  html += "<input type='text' name='jsonPath' value='" + htmlEscape(jsonPath) + "' placeholder='data.count' required>";
-  html += "<p class='help'>Path to value in JSON response (e.g., data.count or users[0].name or items[status=active].count)</p>";
+  html += "<input type='text' name='jsonPath' value='" + htmlEscape(scrJsonPath) + "' placeholder='data.count' required>";
+  html += "<p class='help'>Path to value in JSON response (e.g., data.count or users[0].name)</p>";
 
   html += "<label>Display Prefix:</label>";
-  html += "<input type='text' name='prefix' value='" + htmlEscape(displayPrefix) + "' placeholder='Tickets: '>";
+  html += "<input type='text' name='prefix' value='" + htmlEscape(scrPrefix) + "' placeholder='Tickets: '>";
   html += "<p class='help'>Text to show before the value (optional)</p>";
 
   html += "<label>Display Suffix:</label>";
-  html += "<input type='text' name='suffix' value='" + htmlEscape(displaySuffix) + "' placeholder=' open'>";
+  html += "<input type='text' name='suffix' value='" + htmlEscape(scrSuffix) + "' placeholder=' open'>";
   html += "<p class='help'>Text to show after the value (optional)</p>";
 
   html += "<label>Icon Data (8x8 RGB pixels):</label>";
-  html += "<textarea name='iconData' id='iconData' placeholder='[[255,0,0],[0,255,0],...]'>" + htmlEscape(iconData) + "</textarea>";
+  html += "<textarea name='iconData' id='iconData' placeholder='[[255,0,0],[0,255,0],...]'>" + htmlEscape(scrIconData) + "</textarea>";
   html += "<p class='help'>JSON array of 64 RGB pixels [r,g,b] for 8x8 icon (optional)</p>";
   html += "<div id='iconPreview' class='icon-preview'></div>";
-  
-  html += "<label><input type='checkbox' name='scroll' " + String(scrollEnabled ? "checked" : "") + "><span class='checkbox-label'>Enable Scrolling</span></label>";
+
+  html += "<label><input type='checkbox' name='scroll' " + String(scrScroll ? "checked" : "") + "><span class='checkbox-label'>Enable Scrolling</span></label>";
   html += "<p class='help'>Uncheck for static centered display</p>";
-  
+
   html += "<label>Polling Interval (seconds):</label>";
-  html += "<input type='number' name='interval' value='" + String(pollingInterval) + "' min='5' max='3600' required>";
-  html += "<p class='help'>How often to poll the API (5-3600 seconds)</p>";
-  
-  html += "<button type='submit' class='button'>Save Configuration</button>";
-  html += "<button type='button' class='button secondary' onclick='testAPI()'>Test Connection</button>";
-  html += "<button type='button' onclick='location.href=\"/\"' class='button secondary'>Back</button>";
-  
+  html += "<input type='number' name='interval' value='" + String(scrInterval) + "' min='5' max='3600' required>";
+  html += "<p class='help'>How often to poll this screen's API (5-3600 seconds)</p>";
+
+  html += "<button type='submit' class='button'>Save Screen</button>";
+  if (!isNew) {
+    html += "<button type='button' class='button secondary' onclick='testAPI()'>Test Connection</button>";
+  }
+  html += "<button type='button' onclick='location.href=\"/screens\"' class='button secondary'>Back</button>";
+
   html += "</form>";
-  
+
   html += "<div id='testResult' style='margin-top: 20px;'></div>";
-  
   html += "</div>";
-  
+
+  // JavaScript
   html += "<script>";
-  html += "function testAPI() {";
-  html += "  document.getElementById('testResult').innerHTML = '<p>Testing connection...</p>';";
-  html += "  fetch('/test').then(r => r.text()).then(data => {";
-  html += "    document.getElementById('testResult').innerHTML = '<div class=\"status ok\"><pre>' + data + '</pre></div>';";
-  html += "  }).catch(err => {";
-  html += "    document.getElementById('testResult').innerHTML = '<div class=\"status error\">Error: ' + err + '</div>';";
-  html += "  });";
-  html += "}";
-  
+  if (!isNew) {
+    html += "function testAPI() {";
+    html += "  document.getElementById('testResult').innerHTML = '<p>Testing connection...</p>';";
+    html += "  fetch('/test?screen=" + String(screenIdx) + "').then(r => r.text()).then(data => {";
+    html += "    document.getElementById('testResult').innerHTML = '<div class=\"status ok\"><pre>' + data + '</pre></div>';";
+    html += "  }).catch(err => {";
+    html += "    document.getElementById('testResult').innerHTML = '<div class=\"status error\">Error: ' + err + '</div>';";
+    html += "  });";
+    html += "}";
+  }
+
+  // Icon editor JavaScript (same as before)
   html += "let currentColor = [255, 0, 0];";
   html += "let iconDataArray = [];";
   html += "let isUpdatingFromPreview = false;";
   html += "let colorPickerInitialized = false;";
-  
+
   html += "function rgbToHex(r, g, b) {";
   html += "  return '#' + [r, g, b].map(x => {";
   html += "    const hex = x.toString(16);";
   html += "    return hex.length === 1 ? '0' + hex : hex;";
   html += "  }).join('');";
   html += "}";
-  
+
   html += "function hexToRgb(hex) {";
   html += "  const result = /^#?([a-f\\d]{2})([a-f\\d]{2})([a-f\\d]{2})$/i.exec(hex);";
-  html += "  return result ? [";
-  html += "    parseInt(result[1], 16),";
-  html += "    parseInt(result[2], 16),";
-  html += "    parseInt(result[3], 16)";
-  html += "  ] : [0, 0, 0];";
+  html += "  return result ? [parseInt(result[1], 16), parseInt(result[2], 16), parseInt(result[3], 16)] : [0, 0, 0];";
   html += "}";
-  
+
   html += "function updatePreviewFromJSON() {";
   html += "  if (isUpdatingFromPreview) return;";
   html += "  try {";
   html += "    const data = JSON.parse(document.getElementById('iconData').value);";
-  html += "    if (Array.isArray(data) && data.length === 64) {";
-  html += "      iconDataArray = data;";
-  html += "      renderPreview();";
-  html += "    } else {";
-  html += "      document.getElementById('iconPreview').innerHTML = '<p style=\"color:red\">Invalid: Need exactly 64 pixels</p>';";
-  html += "    }";
+  html += "    if (Array.isArray(data) && data.length === 64) { iconDataArray = data; renderPreview(); }";
+  html += "    else { document.getElementById('iconPreview').innerHTML = '<p style=\"color:red\">Invalid: Need exactly 64 pixels</p>'; }";
   html += "  } catch(e) {";
-  html += "    if (document.getElementById('iconData').value.trim() === '') {";
-  html += "      iconDataArray = Array(64).fill([0, 0, 0]);";
-  html += "      renderPreview();";
-  html += "    } else {";
-  html += "      document.getElementById('iconPreview').innerHTML = '';";
-  html += "    }";
+  html += "    if (document.getElementById('iconData').value.trim() === '') { iconDataArray = Array(64).fill([0,0,0]); renderPreview(); }";
+  html += "    else { document.getElementById('iconPreview').innerHTML = ''; }";
   html += "  }";
   html += "}";
-  
+
   html += "function updateJSONFromPreview() {";
   html += "  isUpdatingFromPreview = true;";
   html += "  document.getElementById('iconData').value = JSON.stringify(iconDataArray);";
   html += "  setTimeout(() => { isUpdatingFromPreview = false; }, 10);";
   html += "}";
-  
+
   html += "function updateColorDisplay() {";
-  html += "  const rgbDisplay = document.getElementById('rgbDisplay');";
-  html += "  if (rgbDisplay) {";
-  html += "    rgbDisplay.textContent = 'RGB: ' + currentColor.join(', ');";
-  html += "  }";
+  html += "  const el = document.getElementById('rgbDisplay');";
+  html += "  if (el) el.textContent = 'RGB: ' + currentColor.join(', ');";
   html += "}";
-  
+
   html += "function renderPreview() {";
-  html += "  let preview = '<div style=\"margin-bottom: 10px;\">';";
-  html += "  preview += '<label>Color Picker: </label>';";
-  html += "  preview += '<input type=\"color\" id=\"colorPicker\" value=\"' + rgbToHex(currentColor[0], currentColor[1], currentColor[2]) + '\" style=\"width:60px;height:30px;border:none;cursor:pointer;\">';";
-  html += "  preview += '<span id=\"rgbDisplay\" style=\"margin-left:10px;\">RGB: ' + currentColor.join(', ') + '</span>';";
-  html += "  preview += '<button type=\"button\" onclick=\"clearIcon()\" style=\"margin-left:15px;padding:5px 10px;cursor:pointer;\">Clear All</button>';";
-  html += "  preview += '</div>';";
-  html += "  preview += '<div id=\"pixelGrid\" style=\"display:inline-block;border:2px solid #ccc;\">';";
-  html += "  for (let i = 0; i < 8; i++) {";
-  html += "    for (let j = 0; j < 8; j++) {";
-  html += "      const idx = i * 8 + j;";
-  html += "      const pixel = iconDataArray[idx] || [0, 0, 0];";
-  html += "      const color = 'rgb(' + pixel[0] + ',' + pixel[1] + ',' + pixel[2] + ')';";
-  html += "      preview += '<div class=\"icon-pixel\" id=\"pixel' + idx + '\" onclick=\"paintPixel(' + idx + ')\" style=\"background-color:' + color + ';cursor:pointer;\" title=\"Click to paint\"></div>';";
-  html += "    }";
-  html += "    preview += '<br>';";
-  html += "  }";
-  html += "  preview += '</div>';";
-  html += "  document.getElementById('iconPreview').innerHTML = preview;";
-  html += "  if (!colorPickerInitialized) {";
-  html += "    setupColorPicker();";
-  html += "    colorPickerInitialized = true;";
-  html += "  }";
+  html += "  let p = '<div style=\"margin-bottom:10px;\">';";
+  html += "  p += '<label>Color Picker: </label>';";
+  html += "  p += '<input type=\"color\" id=\"colorPicker\" value=\"' + rgbToHex(currentColor[0],currentColor[1],currentColor[2]) + '\" style=\"width:60px;height:30px;border:none;cursor:pointer;\">';";
+  html += "  p += '<span id=\"rgbDisplay\" style=\"margin-left:10px;\">RGB: ' + currentColor.join(', ') + '</span>';";
+  html += "  p += '<button type=\"button\" onclick=\"clearIcon()\" style=\"margin-left:15px;padding:5px 10px;cursor:pointer;\">Clear All</button>';";
+  html += "  p += '</div><div id=\"pixelGrid\" style=\"display:inline-block;border:2px solid #ccc;\">';";
+  html += "  for (let i = 0; i < 8; i++) { for (let j = 0; j < 8; j++) {";
+  html += "    const idx = i*8+j; const px = iconDataArray[idx]||[0,0,0];";
+  html += "    p += '<div class=\"icon-pixel\" id=\"pixel'+idx+'\" onclick=\"paintPixel('+idx+')\" style=\"background-color:rgb('+px[0]+','+px[1]+','+px[2]+');cursor:pointer;\" title=\"Click to paint\"></div>';";
+  html += "  } p += '<br>'; }";
+  html += "  p += '</div>';";
+  html += "  document.getElementById('iconPreview').innerHTML = p;";
+  html += "  if (!colorPickerInitialized) { setupColorPicker(); colorPickerInitialized = true; }";
   html += "}";
-  
+
   html += "function setupColorPicker() {";
-  html += "  const colorPicker = document.getElementById('colorPicker');";
-  html += "  if (colorPicker) {";
-  html += "    colorPicker.addEventListener('input', function(e) {";
-  html += "      currentColor = hexToRgb(e.target.value);";
-  html += "      updateColorDisplay();";
-  html += "    });";
-  html += "  }";
+  html += "  const cp = document.getElementById('colorPicker');";
+  html += "  if (cp) cp.addEventListener('input', function(e) { currentColor = hexToRgb(e.target.value); updateColorDisplay(); });";
   html += "}";
-  
+
   html += "function paintPixel(index) {";
   html += "  iconDataArray[index] = [...currentColor];";
-  html += "  const pixelElement = document.getElementById('pixel' + index);";
-  html += "  if (pixelElement) {";
-  html += "    pixelElement.style.backgroundColor = 'rgb(' + currentColor[0] + ',' + currentColor[1] + ',' + currentColor[2] + ')';";
-  html += "  }";
+  html += "  const el = document.getElementById('pixel' + index);";
+  html += "  if (el) el.style.backgroundColor = 'rgb(' + currentColor[0] + ',' + currentColor[1] + ',' + currentColor[2] + ')';";
   html += "  updateJSONFromPreview();";
   html += "}";
-  
+
   html += "function clearIcon() {";
-  html += "  iconDataArray = Array(64).fill([0, 0, 0]);";
-  html += "  for (let i = 0; i < 64; i++) {";
-  html += "    const pixelElement = document.getElementById('pixel' + i);";
-  html += "    if (pixelElement) {";
-  html += "      pixelElement.style.backgroundColor = 'rgb(0, 0, 0)';";
-  html += "    }";
-  html += "  }";
+  html += "  iconDataArray = Array(64).fill([0,0,0]);";
+  html += "  for (let i = 0; i < 64; i++) { const el = document.getElementById('pixel'+i); if (el) el.style.backgroundColor = 'rgb(0,0,0)'; }";
   html += "  updateJSONFromPreview();";
   html += "}";
-  
+
   html += "document.getElementById('iconData').addEventListener('input', updatePreviewFromJSON);";
-  
-  html += "window.addEventListener('load', function() {";
-  html += "  updatePreviewFromJSON();";
-  html += "});";
-  
+  html += "window.addEventListener('load', function() { updatePreviewFromJSON(); });";
+
   html += "</script>";
-  
   html += "</body></html>";
-  
+
   server.send(200, "text/html", html);
 }
 
-void handleSaveAPIConfig() {
+void handleScreenSave() {
   if (!requireAuth()) return;
-  apiEndpoint = server.arg("apiUrl");
-  apiHeaderName = server.arg("apiHeader");
-  apiKey = server.arg("apiKey");
-  jsonPath = server.arg("jsonPath");
-  displayPrefix = server.arg("prefix");
-  displaySuffix = server.arg("suffix");
-  pollingInterval = server.arg("interval").toInt();
-  scrollEnabled = server.hasArg("scroll");
-  iconData = server.arg("iconData");
-  
-  if (pollingInterval < 5) pollingInterval = 5;
-  if (pollingInterval > 3600) pollingInterval = 3600;
-  
-  if (iconData.length() > 0) {
-    parseIconData(iconData);
+
+  int screenIdx = server.arg("id").toInt();
+  bool isNew = (screenIdx < 0 || screenIdx >= numScreens);
+
+  if (isNew) {
+    if (numScreens >= MAX_SCREENS) {
+      server.send(400, "text/plain", "Maximum screens reached");
+      return;
+    }
+    screenIdx = numScreens;
+    numScreens++;
+  }
+
+  Screen& scr = screens[screenIdx];
+  scr.name = server.arg("name");
+  scr.apiEndpoint = server.arg("apiUrl");
+  scr.apiHeaderName = server.arg("apiHeader");
+  scr.apiKey = server.arg("apiKey");
+  scr.jsonPath = server.arg("jsonPath");
+  scr.displayPrefix = server.arg("prefix");
+  scr.displaySuffix = server.arg("suffix");
+  scr.pollingInterval = server.arg("interval").toInt();
+  scr.scrollEnabled = server.hasArg("scroll");
+  scr.iconData = server.arg("iconData");
+
+  if (scr.pollingInterval < 5) scr.pollingInterval = 5;
+  if (scr.pollingInterval > 3600) scr.pollingInterval = 3600;
+
+  if (scr.iconData.length() > 0) {
+    parseIconData(scr.iconData, scr.iconPixels, scr.iconEnabled);
   } else {
-    iconEnabled = false;
+    scr.iconEnabled = false;
   }
-  
-  saveAPIConfiguration();
-  
-  apiConfigured = (apiEndpoint.length() > 0 && jsonPath.length() > 0);
-  
-  if (apiConfigured) {
-    pollAPI();
-    lastAPICall = millis();
+
+  scr.apiConfigured = (scr.apiEndpoint.length() > 0 && scr.jsonPath.length() > 0);
+
+  // Initialize runtime state for new screens
+  if (isNew) {
+    scr.currentValue = "---";
+    scr.lastError = "";
+    scr.lastAPICall = 0;
   }
+
+  // Save to NVS
+  preferences.begin("tc001", false);
+  preferences.putInt("numScreens", numScreens);
+  saveScreenToPrefs(screenIdx);
+  preferences.end();
+
+  Serial.println("Screen " + String(screenIdx) + " saved: " + scr.name);
+
+  // Poll immediately if configured
+  if (scr.apiConfigured) {
+    pollScreenAPI(screenIdx);
+    scr.lastAPICall = millis();
+  }
+
+  // If this is the first screen, make it active
+  if (numScreens == 1) {
+    activeScreen = 0;
+    preferences.begin("tc001", false);
+    preferences.putInt("activeScr", activeScreen);
+    preferences.end();
+  }
+
   scrollX = MATRIX_WIDTH;
-  
-  String html = "<!DOCTYPE html><html><head>";
-  html += "<meta http-equiv='refresh' content='2;url=/'>";
-  html += "<meta name='viewport' content='width=device-width, initial-scale=1'>";
-  html += "<style>";
-  html += "body { font-family: Arial, sans-serif; margin: 20px; background: #f0f0f0; text-align: center; padding-top: 50px; }";
-  html += ".message { background: white; padding: 30px; border-radius: 10px; display: inline-block; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }";
-  html += "</style>";
-  html += "</head><body>";
-  html += "<div class='message'>";
-  html += "<h1>Configuration Saved!</h1>";
-  html += "<p>Redirecting to home page...</p>";
-  html += "</div>";
-  html += "</body></html>";
-  
-  server.send(200, "text/html", html);
+
+  // Redirect to screens page
+  server.sendHeader("Location", "/screens");
+  server.send(303);
+}
+
+void handleScreenDelete() {
+  if (!requireAuth()) return;
+
+  if (!server.hasArg("id")) {
+    server.sendHeader("Location", "/screens");
+    server.send(303);
+    return;
+  }
+
+  int screenIdx = server.arg("id").toInt();
+  if (screenIdx < 0 || screenIdx >= numScreens) {
+    server.sendHeader("Location", "/screens");
+    server.send(303);
+    return;
+  }
+
+  Serial.println("Deleting screen " + String(screenIdx) + ": " + screens[screenIdx].name);
+
+  preferences.begin("tc001", false);
+
+  // Remove last screen's NVS keys (we'll shift data down and re-save)
+  removeScreenFromPrefs(numScreens - 1);
+
+  // Shift screens down in memory
+  for (int i = screenIdx; i < numScreens - 1; i++) {
+    screens[i] = screens[i + 1];
+  }
+
+  numScreens--;
+
+  // Adjust active screen
+  if (numScreens == 0) {
+    activeScreen = 0;
+  } else if (activeScreen >= numScreens) {
+    activeScreen = numScreens - 1;
+  } else if (activeScreen > screenIdx) {
+    activeScreen--;
+  }
+
+  // Re-save all screens in new order
+  preferences.putInt("numScreens", numScreens);
+  preferences.putInt("activeScr", activeScreen);
+  for (int i = 0; i < numScreens; i++) {
+    saveScreenToPrefs(i);
+  }
+
+  preferences.end();
+
+  scrollX = MATRIX_WIDTH;
+
+  server.sendHeader("Location", "/screens");
+  server.send(303);
+}
+
+void handleScreenSetActive() {
+  if (!requireAuth()) return;
+
+  if (server.hasArg("id")) {
+    int screenIdx = server.arg("id").toInt();
+    if (screenIdx >= 0 && screenIdx < numScreens) {
+      switchToScreen(screenIdx);
+    }
+  }
+
+  server.sendHeader("Location", "/screens");
+  server.send(303);
 }
 
 void handleTestAPI() {
   if (!requireAuth()) return;
-  if (apiEndpoint.length() == 0) {
-    server.send(400, "text/plain", "Error: No API endpoint configured");
+
+  int screenIdx = 0;
+  if (server.hasArg("screen")) {
+    screenIdx = server.arg("screen").toInt();
+  }
+
+  if (screenIdx < 0 || screenIdx >= numScreens) {
+    server.send(400, "text/plain", "Error: Invalid screen index");
     return;
   }
 
-  const int TIMEOUT_MS = 10000; // 10 second timeout
+  Screen& scr = screens[screenIdx];
 
-  Serial.println("Testing API: " + apiEndpoint);
+  if (scr.apiEndpoint.length() == 0) {
+    server.send(400, "text/plain", "Error: No API endpoint configured for this screen");
+    return;
+  }
 
-  // URL encode the endpoint to handle special characters in query parameters
-  String encodedUrl = urlEncode(apiEndpoint);
+  const int TIMEOUT_MS = 10000;
+
+  Serial.println("[Test Screen " + String(screenIdx) + "] Testing API: " + scr.apiEndpoint);
+
+  String encodedUrl = urlEncode(scr.apiEndpoint);
 
   HTTPClient http;
   http.begin(encodedUrl);
   http.setTimeout(TIMEOUT_MS);
 
-  if (apiKey.length() > 0) {
-    http.addHeader(apiHeaderName, apiKey);
-    Serial.println("Added header: " + apiHeaderName);
+  if (scr.apiKey.length() > 0) {
+    http.addHeader(scr.apiHeaderName, scr.apiKey);
+    Serial.println("Added header: " + scr.apiHeaderName);
   }
 
-  Serial.println("Sending GET request...");
-  if (encodedUrl != apiEndpoint) {
-    Serial.println("Encoded URL: " + encodedUrl);
-  }
   int httpCode = http.GET();
-  Serial.println("Received HTTP code: " + String(httpCode));
 
-  String response = "API Endpoint: " + apiEndpoint + "\n";
-  if (encodedUrl != apiEndpoint) {
+  String response = "Screen: " + scr.name + "\n";
+  response += "API Endpoint: " + scr.apiEndpoint + "\n";
+  if (encodedUrl != scr.apiEndpoint) {
     response += "Encoded URL: " + encodedUrl + "\n";
   }
   response += "\nHTTP Code: " + String(httpCode) + "\n\n";
@@ -1863,18 +2254,17 @@ void handleTestAPI() {
       String payload = http.getString();
       response += "Response:\n" + payload + "\n\n";
 
-      String extractedValue = extractJSONValue(payload, jsonPath);
+      String extractedValue = extractJSONValue(payload, scr.jsonPath);
       if (extractedValue.length() > 0) {
         response += "Extracted Value: " + extractedValue;
       } else {
-        response += "Error: Could not extract value from JSON path: " + jsonPath;
+        response += "Error: Could not extract value from JSON path: " + scr.jsonPath;
       }
     } else {
       response += "Error: " + http.getString();
     }
   } else {
     response += "Error: " + http.errorToString(httpCode);
-    Serial.println("Error details: " + http.errorToString(httpCode));
   }
 
   http.end();
@@ -1925,20 +2315,33 @@ void handleFactoryReset() {
 }
 
 void handleStatus() {
-  String json = "{";
-  json += "\"device\":\"" + deviceName + "\",";
-  json += "\"device_id\":\"" + deviceID + "\",";
-  json += "\"ip\":\"" + ipAddress + "\",";
-  json += "\"ssid\":\"" + String(WiFi.SSID()) + "\",";
-  json += "\"rssi\":" + String(WiFi.RSSI()) + ",";
-  json += "\"api_configured\":" + String(apiConfigured ? "true" : "false") + ",";
-  json += "\"icon_enabled\":" + String(iconEnabled ? "true" : "false") + ",";
-  json += "\"current_value\":\"" + currentValue + "\",";
-  json += "\"last_error\":\"" + lastError + "\",";
-  json += "\"battery_voltage\":" + String(batteryVoltage, 2) + ",";
-  json += "\"battery_percentage\":" + String(batteryPercentage);
-  json += "}";
-  
+  DynamicJsonDocument doc(4096);
+
+  doc["device"] = deviceName;
+  doc["device_id"] = deviceID;
+  doc["ip"] = ipAddress;
+  doc["ssid"] = WiFi.SSID();
+  doc["rssi"] = WiFi.RSSI();
+  doc["num_screens"] = numScreens;
+  doc["active_screen"] = activeScreen;
+  doc["auto_rotate"] = autoRotate;
+  doc["rotate_interval"] = rotateInterval;
+
+  JsonArray screensArr = doc.createNestedArray("screens");
+  for (int i = 0; i < numScreens; i++) {
+    JsonObject s = screensArr.createNestedObject();
+    s["name"] = screens[i].name;
+    s["api_configured"] = screens[i].apiConfigured;
+    s["current_value"] = screens[i].currentValue;
+    s["last_error"] = screens[i].lastError;
+    s["icon_enabled"] = screens[i].iconEnabled;
+  }
+
+  doc["battery_voltage"] = serialized(String(batteryVoltage, 2));
+  doc["battery_percentage"] = batteryPercentage;
+
+  String json;
+  serializeJson(doc, json);
   server.send(200, "application/json", json);
 }
 

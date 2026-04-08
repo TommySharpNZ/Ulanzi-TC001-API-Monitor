@@ -25,7 +25,7 @@ Custom firmware for the Ulanzi TC001 pixel display clock that enables portable A
 
 This firmware transforms your Ulanzi TC001 into a self-contained API monitoring device. Perfect for scenarios where you need portable, at-a-glance monitoring without relying on external infrastructure.
 
-> ⚠️ **Important:** This firware displays a single metric on the screen and cannot scroll through various apis etc. This is something I'd like to do in the future so please use the Discussions area to suggest new features and enhancements.
+> ⚠️ **Important:** This firmware supports up to 5 screens, each displaying a single value from a REST API that returns simple JSON. It is not suitable for APIs that require OAuth, browser-based authentication flows, or complex multi-step requests (e.g. YouTube, Spotify, Google). If you have feature requests or ideas, please use the Discussions area.
 
 **Key Use Cases:**
 - Markets: Social media followers
@@ -676,9 +676,11 @@ The API can return any valid JSON structure. Use the JSON path configuration to 
 | Action | Result |
 |--------|--------|
 | **Hold Button 1 during startup** | Enter WiFi configuration mode |
-| **Hold Button 2 for 1 second** | Force immediate API refresh (manual update) |
+| **Short press Button 1** | Switch to previous screen |
+| **Short press Button 3** | Switch to next screen |
+| **Hold Button 2 for 1 second** | Force immediate API refresh on active screen |
 | **Hold Button 2 + Button 3 for 0.5s** | Show battery status on display (3 seconds) |
-| **Hold all 3 buttons for 3 seconds** | Factory reset (WiFi + API settings) |
+| **Hold all 3 buttons for 3 seconds** | Factory reset (WiFi + all settings) |
 | **Hold Left (Button 1) + Right (Button 3) buttons** | Power on/off (hardware feature) |
 
 ### Factory Reset
